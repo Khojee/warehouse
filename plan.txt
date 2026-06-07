@@ -1,0 +1,26 @@
+If this were my project, I’d build it in this order:
+
+1. Database schema
+2. Product management
+3. Inventory
+4. Purchase module
+5. Sales module
+6. Debtors
+7. PDF quotations
+8. Excel exports
+9. Dashboard/charts
+10. Backup/restore
+
+
+1. Products          ✅
+2. Inventory         ← NOW
+3. Suppliers
+4. Purchases
+5. Customers
+6. Sales
+7. Debtors
+8. Dashboard
+9. PDF/Excel exports
+10. Backup system
+11. Product images
+12. Product aliases
