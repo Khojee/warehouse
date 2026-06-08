@@ -14,10 +14,10 @@ If this were my project, I’d build it in this order:
 
 1. Products          ✅
 2. Inventory         ← NOW
-3. Suppliers
-4. Purchases
+3. Suppliers --
+4. Purchases--
 5. Customers
-6. Sales
+6. Sales --
 7. Debtors
 8. Dashboard
 9. PDF/Excel exports
