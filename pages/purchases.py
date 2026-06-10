@@ -11,6 +11,7 @@ from sqlalchemy.orm import selectinload
 
 from database import SessionLocal
 from models import Inventory, Product, Purchase, PurchaseItem, StockMovement, Supplier
+from pages.layout import with_master_layout
 
 
 def _to_decimal(value: Any) -> Decimal:
@@ -245,6 +246,7 @@ def load_purchase_detail(purchase_id: int) -> dict[str, Any] | None:
 
 
 @ui.page("/purchases")
+@with_master_layout("Purchases")
 def purchases_page() -> None:
     filters = {"search": "", "supplier_id": "", "payment_status": ""}
     payment_status_options = {"": "All", "Paid": "Paid", "Partially Paid": "Partially Paid", "Unpaid": "Unpaid"}

@@ -8,6 +8,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from database import SessionLocal
 from models import Purchase, Supplier
+from pages.layout import with_master_layout
 
 
 def _clean_text(value: Any) -> str | None:
@@ -127,6 +128,7 @@ def delete_supplier(supplier_id: int) -> bool:
 
 
 @ui.page("/suppliers")
+@with_master_layout("Suppliers")
 def suppliers_page() -> None:
     filters = {
         "search": "",

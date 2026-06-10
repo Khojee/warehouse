@@ -11,6 +11,7 @@ from sqlalchemy.orm import selectinload
 
 from database import SessionLocal
 from models import Customer, Debtor, Inventory, Product, Sale, SaleItem, StockMovement
+from pages.layout import with_master_layout
 
 
 NEW_CUSTOMER_OPTION = "__new_customer__"
@@ -309,6 +310,7 @@ def load_sale_detail(sale_id: int) -> dict[str, Any] | None:
 
 
 @ui.page("/sales")
+@with_master_layout("Sales")
 def sales_page() -> None:
     filters = {"search": "", "customer_id": "", "payment_status": ""}
     payment_status_options = {"": "All", "Paid": "Paid", "Partially Paid": "Partially Paid", "Unpaid": "Unpaid"}

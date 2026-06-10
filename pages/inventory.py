@@ -9,6 +9,7 @@ from sqlalchemy.orm import selectinload
 
 from database import SessionLocal, engine
 from models import Inventory, Product, ProductAlias, ProductCategory, StockMovement
+from pages.layout import with_master_layout
 
 
 def ensure_inventory_trigger() -> None:
@@ -216,6 +217,7 @@ def adjust_stock(
 
 
 @ui.page("/inventory")
+@with_master_layout("Inventory")
 def inventory_page() -> None:
     ensure_inventory_trigger()
     ensure_inventory_rows()

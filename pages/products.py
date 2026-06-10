@@ -10,6 +10,7 @@ from sqlalchemy.orm import selectinload
 
 from database import SessionLocal
 from models import Product, ProductCategory
+from pages.layout import with_master_layout
 
 
 OTHER_CATEGORY_OPTION = "other"
@@ -250,6 +251,7 @@ def delete_product(product_id: int) -> bool:
 
 
 @ui.page("/products")
+@with_master_layout("Products")
 def products_page() -> None:
     ui.label("Products").classes("text-h4 q-mb-md")
 
