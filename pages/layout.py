@@ -383,8 +383,13 @@ def _build_sidebar(current_path: str) -> None:
                         ui.label("Admin").classes("fc-profile-name")
                         ui.label("Warehouse Manager").classes("fc-profile-role")
 
+    initialized = {"done": False}
+
     async def init_responsive() -> None:
-        await ui.context.client.connected()
+        # on_connect also fires on reconnects; only initialize once per page.
+        if initialized["done"]:
+            return
+        initialized["done"] = True
         try:
             width = await ui.run_javascript("window.innerWidth", timeout=5.0)
         except TimeoutError:
@@ -393,7 +398,10 @@ def _build_sidebar(current_path: str) -> None:
             state["collapsed"] = True
             apply_state()
 
-    ui.timer(0.05, init_responsive, once=True)
+    # Run after the websocket handshake instead of a detached timer: connect
+    # handlers never fire for clients that are discarded before connecting,
+    # which previously caused "parent slot has been deleted" errors.
+    ui.context.client.on_connect(init_responsive)
 
 
 def with_master_layout(page_title: str) -> Callable[[Callable[..., Any]], Callable[..., None]]:
