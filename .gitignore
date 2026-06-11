@@ -24,6 +24,9 @@ __pycache__/
 # NiceGUI temp files
 .storage/
 
+# Auth session secret (per installation)
+database/.storage_secret
+
 # Build
 dist/
 build/

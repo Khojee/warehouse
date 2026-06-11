@@ -5,7 +5,10 @@ from functools import wraps
 from pathlib import Path
 from typing import Any
 
+from fastapi.responses import RedirectResponse
 from nicegui import app, ui
+
+from services import auth_service
 
 
 APP_NAME = "FlowCore"
@@ -262,6 +265,19 @@ html, body {
     overflow: hidden;
 }
 
+.fc-profile-logout {
+    margin-left: auto;
+    color: var(--fc-muted) !important;
+}
+
+.fc-profile-logout:hover {
+    color: #EF4444 !important;
+}
+
+.fc-sidebar.fc-collapsed .fc-profile-logout {
+    display: none;
+}
+
 /* ---------- content ---------- */
 .fc-content {
     flex: 1 1 auto;
@@ -337,7 +353,7 @@ def _build_header() -> None:
         ui.label(APP_NAME).classes("fc-header-title")
 
 
-def _build_sidebar(current_path: str) -> None:
+def _build_sidebar(current_path: str, user: dict[str, Any]) -> None:
     state = {"collapsed": False}
 
     sidebar = ui.element("aside").classes("fc-sidebar")
@@ -375,13 +391,20 @@ def _build_sidebar(current_path: str) -> None:
                         ui.icon(item["icon"])
                         ui.label(item["label"]).classes("fc-nav-label")
                         ui.tooltip(item["label"]).props("anchor='center right' self='center left'")
+            full_name = str(user.get("full_name") or "User")
+            username = str(user.get("username") or "")
+            initial = (full_name.strip()[:1] or "U").upper()
             with ui.element("div").classes("fc-profile-wrap"):
                 with ui.element("div").classes("fc-profile"):
                     with ui.element("div").classes("fc-avatar"):
-                        ui.label("A")
+                        ui.label(initial)
                     with ui.element("div").classes("fc-profile-text"):
-                        ui.label("Admin").classes("fc-profile-name")
-                        ui.label("Warehouse Manager").classes("fc-profile-role")
+                        ui.label(full_name).classes("fc-profile-name")
+                        ui.label(username).classes("fc-profile-role")
+                    with ui.button(
+                        on_click=lambda: ui.navigate.to("/logout")
+                    ).props("flat round dense icon=logout").classes("fc-profile-logout"):
+                        ui.tooltip("Logout")
 
     initialized = {"done": False}
 
@@ -404,21 +427,87 @@ def _build_sidebar(current_path: str) -> None:
     ui.context.client.on_connect(init_responsive)
 
 
-def with_master_layout(page_title: str) -> Callable[[Callable[..., Any]], Callable[..., None]]:
-    def decorator(page_fn: Callable[..., Any]) -> Callable[..., None]:
+def _install_session_watchdog() -> None:
+    """Enforce the inactivity timeout while a page stays open.
+
+    Client side: any interaction bumps an activity timestamp; a JS interval
+    redirects to /logout after 15 idle minutes (even if the server is busy).
+    Server side: a per-page timer (started only after the websocket connects)
+    polls the real idle time to keep the session fresh during activity and to
+    destroy it once the timeout is reached.
+    """
+    timeout_ms = auth_service.SESSION_TIMEOUT_SECONDS * 1000
+    ui.add_body_html(
+        f"""
+        <script>
+        (function () {{
+            window._fcLastActivity = Date.now();
+            const bump = function () {{ window._fcLastActivity = Date.now(); }};
+            ['click', 'keydown', 'mousemove', 'wheel', 'scroll', 'touchstart'].forEach(function (ev) {{
+                document.addEventListener(ev, bump, {{ passive: true, capture: true }});
+            }});
+            setInterval(function () {{
+                if (Date.now() - window._fcLastActivity > {timeout_ms}) {{
+                    window.location.assign('/logout');
+                }}
+            }}, 15000);
+        }})();
+        </script>
+        """
+    )
+
+    # Resolve the session storage now (request context is available during
+    # page build); timer callbacks cannot access app.storage.user directly.
+    user_storage = app.storage.user
+    started = {"done": False}
+
+    def start_watchdog() -> None:
+        if started["done"]:
+            return
+        started["done"] = True
+
+        async def check_activity() -> None:
+            try:
+                idle_ms = await ui.run_javascript(
+                    "Date.now() - (window._fcLastActivity || Date.now())",
+                    timeout=5.0,
+                )
+                idle_seconds = max(float(idle_ms) / 1000.0, 0.0)
+            except (TimeoutError, TypeError, ValueError):
+                return
+            if idle_seconds >= auth_service.SESSION_TIMEOUT_SECONDS:
+                auth_service.logout_session(user_storage)
+                ui.navigate.to("/login")
+            else:
+                auth_service.touch_session(idle_seconds, storage=user_storage)
+
+        ui.timer(60.0, check_activity)
+
+    ui.context.client.on_connect(start_watchdog)
+
+
+def with_master_layout(page_title: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    def decorator(page_fn: Callable[..., Any]) -> Callable[..., Any]:
         @wraps(page_fn)
-        def wrapped(*args: Any, **kwargs: Any) -> None:
+        def wrapped(*args: Any, **kwargs: Any) -> Any:
+            user = auth_service.current_user()
+            if user is None:
+                return RedirectResponse("/login")
+            auth_service.touch_session()
+
             current_path = str(ui.context.client.request.url.path)
 
             ui.page_title(f"{page_title} · {APP_NAME}")
             _apply_theme()
+            _install_session_watchdog()
 
             with ui.element("div").classes("fc-app"):
                 _build_header()
                 with ui.element("div").classes("fc-body"):
-                    _build_sidebar(current_path)
+                    _build_sidebar(current_path, user)
                     with ui.column().classes("fc-content"):
                         page_fn(*args, **kwargs)
+            return None
 
         return wrapped
 
