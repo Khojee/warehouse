@@ -135,6 +135,34 @@ def touch_session(
 
 # -------------------------------------------------------------- authenticate
 
+def _verify_credentials(session: Any, username: str, password: str) -> tuple[User | None, str]:
+    """Shared credential check with lockout enforcement and failure counting.
+
+    Returns (user, "") on success or (None, generic_message) on failure.
+    Must be called inside an open transaction so failure counters persist.
+    """
+    user = session.scalar(select(User).where(User.username == username))
+    now = datetime.utcnow()
+
+    if user is None:
+        bcrypt.checkpw(password.encode("utf-8"), _DUMMY_HASH)
+        return None, INVALID_MESSAGE
+
+    if user.locked_until is not None and user.locked_until > now:
+        return None, LOCKED_MESSAGE
+
+    password_ok = verify_password(password, user.password_hash)
+    if not password_ok or not user.is_active:
+        user.failed_attempts = (user.failed_attempts or 0) + 1
+        if user.failed_attempts >= LOCK_THRESHOLD:
+            user.locked_until = now + timedelta(minutes=LOCK_MINUTES)
+            user.failed_attempts = 0
+            return None, LOCKED_MESSAGE
+        return None, INVALID_MESSAGE
+
+    return user, ""
+
+
 def authenticate(username: str, password: str) -> tuple[bool, str]:
     """Verify credentials, enforce lockout, and open a session on success.
 
@@ -147,29 +175,58 @@ def authenticate(username: str, password: str) -> tuple[bool, str]:
 
     try:
         with SessionLocal.begin() as session:
-            user = session.scalar(select(User).where(User.username == username))
-            now = datetime.utcnow()
-
+            user, error = _verify_credentials(session, username, password)
             if user is None:
-                bcrypt.checkpw(password.encode("utf-8"), _DUMMY_HASH)
-                return False, INVALID_MESSAGE
-
-            if user.locked_until is not None and user.locked_until > now:
-                return False, LOCKED_MESSAGE
-
-            password_ok = verify_password(password, user.password_hash)
-            if not password_ok or not user.is_active:
-                user.failed_attempts = (user.failed_attempts or 0) + 1
-                if user.failed_attempts >= LOCK_THRESHOLD:
-                    user.locked_until = now + timedelta(minutes=LOCK_MINUTES)
-                    user.failed_attempts = 0
-                    return False, LOCKED_MESSAGE
-                return False, INVALID_MESSAGE
+                return False, error
 
             user.failed_attempts = 0
             user.locked_until = None
-            user.last_login = now
+            user.last_login = datetime.utcnow()
             login_session(user)
             return True, ""
     except SQLAlchemyError:
         return False, "Login failed. Please try again."
+
+
+def change_credentials(
+    current_username: str,
+    current_password: str,
+    new_username: str,
+    new_password: str,
+    confirm_password: str,
+) -> tuple[bool, str]:
+    """Update username and password after re-verifying the current credentials.
+
+    Enforces the same lockout rules as login. Only the new-username uniqueness
+    check reveals information about other accounts.
+    """
+    current_username = (current_username or "").strip()
+    current_password = current_password or ""
+    new_username = (new_username or "").strip()
+    new_password = new_password or ""
+    confirm_password = confirm_password or ""
+
+    if not current_username or not current_password or not new_username or not new_password:
+        return False, "All fields are required."
+    if new_password != confirm_password:
+        return False, "New Password and Confirm New Password do not match."
+
+    try:
+        with SessionLocal.begin() as session:
+            user, error = _verify_credentials(session, current_username, current_password)
+            if user is None:
+                return False, error
+
+            taken = session.scalar(
+                select(User).where(User.username == new_username).where(User.id != user.id)
+            )
+            if taken is not None:
+                return False, "New username is already taken."
+
+            user.username = new_username
+            user.password_hash = hash_password(new_password)
+            user.failed_attempts = 0
+            user.locked_until = None
+            return True, "Credentials updated successfully."
+    except SQLAlchemyError:
+        return False, "Failed to update credentials. Please try again."
