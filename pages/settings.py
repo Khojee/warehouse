@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from nicegui import ui
@@ -10,6 +11,7 @@ from database import SessionLocal
 from models import Setting
 from pages.components import page_header, surface_card
 from pages.layout import with_master_layout
+from services import image_service
 
 
 SETTINGS_KEYS = [
@@ -129,6 +131,71 @@ def settings_page() -> None:
 
             ui.button("Reload", on_click=reload_settings, color="grey-6")
             ui.button("Save Settings", on_click=save_settings, color="primary")
+
+    with surface_card().classes("flex flex-col gap-3"):
+        ui.label("Company Logo").classes("text-h6 q-mb-sm")
+        with ui.row().classes("w-full items-center gap-6 no-wrap"):
+            preview_box = (
+                ui.element("div")
+                .classes("flex items-center justify-center")
+                .style(
+                    "width:120px;height:120px;border-radius:16px;"
+                    "background:#F8FAFC;border:1px dashed rgba(15,23,42,.15);"
+                    "flex-shrink:0;overflow:hidden;"
+                )
+            )
+
+            def render_logo_preview() -> None:
+                preview_box.clear()
+                with preview_box:
+                    logo_path = image_service.get_logo_path()
+                    if logo_path:
+                        ui.image(f"/{logo_path}?v={int(time.time())}").props(
+                            "fit=contain no-spinner"
+                        ).style("width:112px;height:112px;")
+                    else:
+                        with ui.column().classes("items-center gap-1"):
+                            ui.icon("image").classes("text-grey-5").style("font-size:40px")
+                            ui.label("No logo").classes("text-caption text-grey-6")
+
+            with ui.column().classes("flex-1 min-w-0 gap-1"):
+                ui.label("Upload a PNG, JPG, JPEG or WEBP image.").classes(
+                    "text-caption text-grey-7"
+                )
+
+                async def handle_logo_upload(e: Any) -> None:
+                    ext = image_service.extension_of(e.file.name)
+                    if ext is None:
+                        ui.notify(
+                            "Only PNG, JPG, JPEG and WEBP images are allowed.",
+                            color="warning",
+                        )
+                        logo_upload.reset()
+                        return
+                    data = await e.file.read()
+                    try:
+                        relative_path = image_service.save_company_logo(data, ext)
+                    except (OSError, SQLAlchemyError):
+                        ui.notify("Failed to save company logo.", color="negative")
+                        return
+                    logo_path_input.value = relative_path
+                    logo_path_input.update()
+                    logo_upload.reset()
+                    render_logo_preview()
+                    ui.notify("Company logo updated successfully.", color="positive")
+
+                logo_upload = (
+                    ui.upload(
+                        label="Upload Logo",
+                        auto_upload=True,
+                        max_file_size=10 * 1024 * 1024,
+                        on_upload=handle_logo_upload,
+                    )
+                    .props('accept=".png,.jpg,.jpeg,.webp" flat bordered')
+                    .classes("w-full max-w-md")
+                )
+
+        render_logo_preview()
 
     reload_settings()
 

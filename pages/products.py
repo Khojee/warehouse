@@ -10,6 +10,7 @@ from sqlalchemy.orm import selectinload
 
 from database import SessionLocal
 from models import Product, ProductCategory
+from services import image_service
 from pages.components import (
     add_table_empty_state,
     data_table_card,
@@ -49,7 +50,10 @@ def load_products(
     with SessionLocal() as session:
         stmt = (
             select(Product)
-            .options(selectinload(Product.product_category))
+            .options(
+                selectinload(Product.product_category),
+                selectinload(Product.images),
+            )
             .order_by(Product.id.desc())
         )
         if name.strip():
@@ -69,9 +73,19 @@ def load_products(
             stmt = stmt.where(Product.min_stock > 0)
 
         products = session.scalars(stmt).all()
+
+        def primary_image_url(product: Product) -> str:
+            images = sorted(product.images, key=lambda img: not img.is_primary)
+            for image in images:
+                relative = (image.file_path or "").strip().replace("\\", "/")
+                if relative and (image_service.PROJECT_ROOT / relative).exists():
+                    return f"/{relative}"
+            return ""
+
         return [
             {
                 "id": product.id,
+                "image_url": primary_image_url(product),
                 "name": product.name,
                 "category_id": product.category_id or "",
                 "category": (
@@ -273,6 +287,7 @@ def products_page() -> None:
     editing_product_id: int | None = None
 
     columns = [
+        {"name": "image", "label": "Image", "field": "image_url", "align": "center"},
         {"name": "name", "label": "Name", "field": "name", "align": "left"},
         {"name": "category", "label": "Category", "field": "category", "align": "left"},
         {"name": "size", "label": "Size", "field": "size", "align": "left"},
@@ -392,6 +407,35 @@ def products_page() -> None:
                 )
             description_input = ui.textarea("Description").classes("w-full")
 
+            image_state: dict[str, Any] = {"data": None, "ext": None, "name": ""}
+            image_status_label: Any = None
+
+            async def handle_image_upload(e: Any) -> None:
+                ext = image_service.extension_of(e.file.name)
+                if ext is None:
+                    ui.notify(
+                        "Only PNG, JPG, JPEG and WEBP images are allowed.",
+                        color="warning",
+                    )
+                    image_upload.reset()
+                    return
+                image_state["data"] = await e.file.read()
+                image_state["ext"] = ext
+                image_state["name"] = e.file.name
+                image_status_label.text = f"Selected image: {e.file.name}"
+
+            image_upload = (
+                ui.upload(
+                    label="Product Image",
+                    auto_upload=True,
+                    max_file_size=10 * 1024 * 1024,
+                    on_upload=handle_image_upload,
+                )
+                .props('accept=".png,.jpg,.jpeg,.webp" flat bordered')
+                .classes("w-full")
+            )
+            image_status_label = ui.label("").classes("text-caption text-grey-7")
+
             with ui.row().classes("justify-end w-full q-mt-md"):
                 ui.button("Cancel", on_click=dialog.close, color="grey-6")
                 action_button = ui.button("Save")
@@ -406,6 +450,9 @@ def products_page() -> None:
             "current_price": current_price_input,
             "min_stock": min_stock_input,
             "description": description_input,
+            "image_state": image_state,
+            "image_upload": image_upload,
+            "image_status": image_status_label,
             "action_button": action_button,
         }
         return dialog, inputs
@@ -426,6 +473,37 @@ def products_page() -> None:
             "description": inputs["description"].value,
         }
 
+    def _clear_image_field(inputs: dict[str, Any], current_image: str = "") -> None:
+        inputs["image_state"].update(data=None, ext=None, name="")
+        inputs["image_upload"].reset()
+        inputs["image_status"].text = (
+            "Current image will be replaced if you upload a new one."
+            if current_image
+            else ""
+        )
+
+    def _save_uploaded_image(inputs: dict[str, Any], product_id: int) -> None:
+        state = inputs["image_state"]
+        if not state.get("data"):
+            return
+        category_value = str(inputs["category"].value or "")
+        category_name = (
+            category_form_options.get(category_value, "")
+            if category_value not in {"", OTHER_CATEGORY_OPTION}
+            else ""
+        )
+        try:
+            file_path = image_service.save_product_image(
+                state["data"],
+                category=category_name,
+                size=str(inputs["size"].value or ""),
+                pressure=str(inputs["pressure"].value or ""),
+                ext=state["ext"],
+            )
+            image_service.upsert_primary_product_image(product_id, file_path)
+        except (OSError, SQLAlchemyError):
+            ui.notify("Product saved, but the image upload failed.", color="warning")
+
     def _reset_form(inputs: dict[str, Any]) -> None:
         inputs["name"].value = ""
         inputs["category"].value = ""
@@ -436,6 +514,7 @@ def products_page() -> None:
         inputs["current_price"].value = "0.00"
         inputs["min_stock"].value = 0
         inputs["description"].value = ""
+        _clear_image_field(inputs)
 
     def _fill_form(inputs: dict[str, Any], row: dict[str, Any]) -> None:
         inputs["name"].value = row["name"]
@@ -447,6 +526,7 @@ def products_page() -> None:
         inputs["current_price"].value = row["current_price"]
         inputs["min_stock"].value = row["min_stock"]
         inputs["description"].value = row["description"]
+        _clear_image_field(inputs, current_image=str(row.get("image_url") or ""))
 
     with ui.dialog() as create_category_dialog, ui.card().classes("w-[420px] max-w-full"):
         ui.label("Create Category").classes("text-h6")
@@ -545,7 +625,8 @@ def products_page() -> None:
 
     def on_add_product() -> None:
         try:
-            create_product(_form_data(add_inputs))
+            product = create_product(_form_data(add_inputs))
+            _save_uploaded_image(add_inputs, product.id)
             add_dialog.close()
             refresh_table()
             ui.notify("Product created successfully.", color="positive")
@@ -575,6 +656,7 @@ def products_page() -> None:
             if not updated:
                 ui.notify("Product not found.", color="warning")
                 return
+            _save_uploaded_image(edit_inputs, editing_product_id)
             edit_dialog.close()
             refresh_table()
             ui.notify("Product updated successfully.", color="positive")
@@ -690,6 +772,16 @@ def products_page() -> None:
                     "w-full"
                 )
 
+    table.add_slot(
+        "body-cell-image",
+        """
+        <q-td :props="props">
+          <img v-if="props.row.image_url" :src="props.row.image_url" loading="lazy"
+            style="width:64px;height:64px;object-fit:cover;border-radius:12px;display:block;margin:0 auto;" />
+          <q-icon v-else name="image" size="28px" class="text-grey-5" />
+        </q-td>
+        """,
+    )
     table.add_slot(
         "body-cell-actions",
         """
