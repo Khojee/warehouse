@@ -11,6 +11,14 @@ from sqlalchemy.orm import selectinload
 
 from database import SessionLocal
 from models import Customer, Debtor, Inventory, Product, Sale, SaleItem, StockMovement
+from pages.components import (
+    add_table_empty_state,
+    data_table_card,
+    filter_sidebar,
+    page_header,
+    search_panel,
+    style_status_column,
+)
 from pages.layout import with_master_layout
 
 
@@ -319,7 +327,7 @@ def sales_page() -> None:
     product_options = load_product_options()
     product_map = load_product_map()
 
-    ui.label("Sales").classes("text-h4 q-mb-md")
+    page_header("Sales", "Create sales and track customer payments.")
 
     sale_columns = [
         {"name": "sale_number", "label": "Sale Number", "field": "sale_number", "align": "left"},
@@ -629,59 +637,59 @@ def sales_page() -> None:
         details_items_table.update()
         details_dialog.open()
 
-    with ui.row().classes("w-full q-mb-md justify-center"):
-        with ui.row().classes("w-full max-w-3xl items-end justify-center gap-2"):
+    with search_panel():
+        with ui.row().classes("w-full items-end no-wrap gap-3"):
             search_input = ui.input(
                 label="Search Sale / Customer",
                 placeholder="Search by sale number or customer",
                 on_change=lambda e: filters.__setitem__("search", e.value or ""),
-            ).classes("w-full max-w-2xl")
+            ).classes("flex-1 min-w-0")
             ui.button("Search", on_click=refresh_table, icon="search")
             ui.button("Add Sale", on_click=lambda: open_add_dialog(), icon="add", color="primary")
 
-    with ui.card().classes("w-full q-pa-md"):
-        with ui.row().classes("w-full items-start gap-4 no-wrap"):
-            with ui.column().classes("w-[280px] min-w-[250px] max-w-[300px]"):
-                ui.label("Filters").classes("text-subtitle1 q-mb-sm")
-                customer_filter_select = ui.select(
-                    options=customer_options,
-                    label="Customer",
-                    value="",
-                    with_input=True,
-                    on_change=lambda e: filters.__setitem__("customer_id", e.value or ""),
-                ).classes("w-full q-mb-sm")
-                payment_status_select = ui.select(
-                    options=payment_status_options,
-                    label="Payment Status",
-                    value="",
-                    with_input=True,
-                    on_change=lambda e: filters.__setitem__("payment_status", e.value or ""),
-                ).classes("w-full q-mb-md")
+    with ui.row().classes("w-full items-start gap-4 no-wrap"):
+        with filter_sidebar():
+            customer_filter_select = ui.select(
+                options=customer_options,
+                label="Customer",
+                value="",
+                with_input=True,
+                on_change=lambda e: filters.__setitem__("customer_id", e.value or ""),
+            ).classes("w-full")
+            payment_status_select = ui.select(
+                options=payment_status_options,
+                label="Payment Status",
+                value="",
+                with_input=True,
+                on_change=lambda e: filters.__setitem__("payment_status", e.value or ""),
+            ).classes("w-full")
 
-                def reset_filters() -> None:
-                    filters["search"] = ""
-                    filters["customer_id"] = ""
-                    filters["payment_status"] = ""
-                    search_input.value = ""
-                    customer_filter_select.value = ""
-                    payment_status_select.value = ""
-                    search_input.update()
-                    customer_filter_select.update()
-                    payment_status_select.update()
-                    refresh_table()
+            def reset_filters() -> None:
+                filters["search"] = ""
+                filters["customer_id"] = ""
+                filters["payment_status"] = ""
+                search_input.value = ""
+                customer_filter_select.value = ""
+                payment_status_select.value = ""
+                search_input.update()
+                customer_filter_select.update()
+                payment_status_select.update()
+                refresh_table()
 
-                ui.button("Apply Filters", on_click=refresh_table, icon="filter_alt").classes("w-full")
-                ui.button("Reset Filters", on_click=reset_filters, icon="refresh").classes("w-full q-mt-sm")
+            ui.button("Apply Filters", on_click=refresh_table, icon="filter_alt").classes("w-full")
+            ui.button("Reset Filters", on_click=reset_filters, icon="refresh").classes("w-full q-mt-sm")
 
-            with ui.column().classes("flex-1 min-w-0"):
-                with ui.element("div").classes("w-full overflow-auto").style("max-height: calc(100vh - 300px);"):
-                    sales_table = ui.table(
-                        columns=sale_columns,
-                        rows=[],
-                        row_key="id",
-                        pagination=15,
-                    ).classes("w-full")
+        with data_table_card().classes("flex-1 min-w-0"):
+            with ui.element("div").classes("w-full overflow-auto").style("max-height: calc(100vh - 300px);"):
+                sales_table = ui.table(
+                    columns=sale_columns,
+                    rows=[],
+                    row_key="id",
+                    pagination=15,
+                ).classes("w-full")
 
+    style_status_column(sales_table, "payment_status")
+    add_table_empty_state(sales_table, "No sales recorded yet.", icon="🧾")
     sales_table.add_slot(
         "body-cell-actions",
         """

@@ -11,6 +11,14 @@ from sqlalchemy.orm import selectinload
 
 from database import SessionLocal
 from models import Inventory, Product, Purchase, PurchaseItem, StockMovement, Supplier
+from pages.components import (
+    add_table_empty_state,
+    data_table_card,
+    filter_sidebar,
+    page_header,
+    search_panel,
+    style_status_column,
+)
 from pages.layout import with_master_layout
 
 
@@ -253,7 +261,7 @@ def purchases_page() -> None:
     supplier_options = load_supplier_options()
     product_options = load_product_options()
 
-    ui.label("Purchases").classes("text-h4 q-mb-md")
+    page_header("Purchases", "Record supplier purchases and track payments.")
 
     purchase_columns = [
         {"name": "purchase_number", "label": "Purchase Number", "field": "purchase_number", "align": "left"},
@@ -480,59 +488,59 @@ def purchases_page() -> None:
         details_items_table.update()
         details_dialog.open()
 
-    with ui.row().classes("w-full q-mb-md justify-center"):
-        with ui.row().classes("w-full max-w-3xl items-end justify-center gap-2"):
+    with search_panel():
+        with ui.row().classes("w-full items-end no-wrap gap-3"):
             search_input = ui.input(
                 label="Search Purchase / Supplier",
                 placeholder="Search by purchase number or supplier",
                 on_change=lambda e: filters.__setitem__("search", e.value or ""),
-            ).classes("w-full max-w-2xl")
+            ).classes("flex-1 min-w-0")
             ui.button("Search", on_click=refresh_table, icon="search")
             ui.button("Add Purchase", on_click=lambda: open_add_dialog(), icon="add", color="primary")
 
-    with ui.card().classes("w-full q-pa-md"):
-        with ui.row().classes("w-full items-start gap-4 no-wrap"):
-            with ui.column().classes("w-[280px] min-w-[250px] max-w-[300px]"):
-                ui.label("Filters").classes("text-subtitle1 q-mb-sm")
-                supplier_filter_select = ui.select(
-                    options=supplier_options,
-                    label="Supplier",
-                    value="",
-                    with_input=True,
-                    on_change=lambda e: filters.__setitem__("supplier_id", e.value or ""),
-                ).classes("w-full q-mb-sm")
-                payment_status_select = ui.select(
-                    options=payment_status_options,
-                    label="Payment Status",
-                    value="",
-                    with_input=True,
-                    on_change=lambda e: filters.__setitem__("payment_status", e.value or ""),
-                ).classes("w-full q-mb-md")
+    with ui.row().classes("w-full items-start gap-4 no-wrap"):
+        with filter_sidebar():
+            supplier_filter_select = ui.select(
+                options=supplier_options,
+                label="Supplier",
+                value="",
+                with_input=True,
+                on_change=lambda e: filters.__setitem__("supplier_id", e.value or ""),
+            ).classes("w-full")
+            payment_status_select = ui.select(
+                options=payment_status_options,
+                label="Payment Status",
+                value="",
+                with_input=True,
+                on_change=lambda e: filters.__setitem__("payment_status", e.value or ""),
+            ).classes("w-full")
 
-                def reset_filters() -> None:
-                    filters["search"] = ""
-                    filters["supplier_id"] = ""
-                    filters["payment_status"] = ""
-                    search_input.value = ""
-                    supplier_filter_select.value = ""
-                    payment_status_select.value = ""
-                    search_input.update()
-                    supplier_filter_select.update()
-                    payment_status_select.update()
-                    refresh_table()
+            def reset_filters() -> None:
+                filters["search"] = ""
+                filters["supplier_id"] = ""
+                filters["payment_status"] = ""
+                search_input.value = ""
+                supplier_filter_select.value = ""
+                payment_status_select.value = ""
+                search_input.update()
+                supplier_filter_select.update()
+                payment_status_select.update()
+                refresh_table()
 
-                ui.button("Apply Filters", on_click=refresh_table, icon="filter_alt").classes("w-full")
-                ui.button("Reset Filters", on_click=reset_filters, icon="refresh").classes("w-full q-mt-sm")
+            ui.button("Apply Filters", on_click=refresh_table, icon="filter_alt").classes("w-full")
+            ui.button("Reset Filters", on_click=reset_filters, icon="refresh").classes("w-full q-mt-sm")
 
-            with ui.column().classes("flex-1 min-w-0"):
-                with ui.element("div").classes("w-full overflow-auto").style("max-height: calc(100vh - 300px);"):
-                    purchases_table = ui.table(
-                        columns=purchase_columns,
-                        rows=[],
-                        row_key="id",
-                        pagination=15,
-                    ).classes("w-full")
+        with data_table_card().classes("flex-1 min-w-0"):
+            with ui.element("div").classes("w-full overflow-auto").style("max-height: calc(100vh - 300px);"):
+                purchases_table = ui.table(
+                    columns=purchase_columns,
+                    rows=[],
+                    row_key="id",
+                    pagination=15,
+                ).classes("w-full")
 
+    style_status_column(purchases_table, "payment_status")
+    add_table_empty_state(purchases_table, "No purchases recorded yet.", icon="📦")
     purchases_table.add_slot(
         "body-cell-actions",
         """

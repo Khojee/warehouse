@@ -11,6 +11,16 @@ from sqlalchemy.orm import selectinload
 
 from database import SessionLocal
 from models import Customer, Debtor, DebtorPayment, Sale
+from pages.components import (
+    add_table_empty_state,
+    data_table_card,
+    filter_sidebar,
+    page_header,
+    search_panel,
+    statistic_card,
+    statistic_grid,
+    style_status_column,
+)
 from pages.layout import with_master_layout
 
 
@@ -242,7 +252,7 @@ def debtors_page() -> None:
     due_filter_options = {"": "All", "overdue": "Overdue", "due_today": "Due Today"}
     customer_options = load_customer_options()
 
-    ui.label("Debtors").classes("text-h4 q-mb-md")
+    page_header("Debtors", "Monitor outstanding debts and record payments.")
 
     debtors_columns = [
         {"name": "customer", "label": "Customer", "field": "customer", "align": "left"},
@@ -385,98 +395,78 @@ def debtors_page() -> None:
         receive_notes_input.value = ""
         payment_dialog.open()
 
-    with ui.row().classes("w-full q-mb-md justify-center"):
-        with ui.row().classes("w-full max-w-3xl items-end justify-center gap-2"):
+    with search_panel():
+        with ui.row().classes("w-full items-end no-wrap gap-3"):
             search_input = ui.input(
                 label="Search Customer / Sale Number",
                 placeholder="Search by customer or sale number",
                 on_change=lambda e: filters.__setitem__("search", e.value or ""),
-            ).classes("w-full max-w-2xl")
+            ).classes("flex-1 min-w-0")
             ui.button("Search", on_click=refresh_page, icon="search")
 
-    with ui.card().classes("w-full q-pa-md"):
-        with ui.row().classes("w-full items-start gap-4 no-wrap"):
-            with ui.column().classes("w-[280px] min-w-[250px] max-w-[300px]"):
-                ui.label("Filters").classes("text-subtitle1 q-mb-sm")
-                customer_filter_select = ui.select(
-                    options=customer_options,
-                    label="Customer",
-                    value="",
-                    with_input=True,
-                    on_change=lambda e: filters.__setitem__("customer_id", e.value or ""),
-                ).classes("w-full q-mb-sm")
-                status_filter_select = ui.select(
-                    options=status_options,
-                    label="Status",
-                    value="",
-                    on_change=lambda e: filters.__setitem__("status", e.value or ""),
-                ).classes("w-full q-mb-sm")
-                due_filter_select = ui.select(
-                    options=due_filter_options,
-                    label="Due Date Filter",
-                    value="",
-                    on_change=lambda e: filters.__setitem__("due_filter", e.value or ""),
-                ).classes("w-full q-mb-md")
+    with ui.row().classes("w-full items-start gap-4 no-wrap"):
+        with filter_sidebar():
+            customer_filter_select = ui.select(
+                options=customer_options,
+                label="Customer",
+                value="",
+                with_input=True,
+                on_change=lambda e: filters.__setitem__("customer_id", e.value or ""),
+            ).classes("w-full")
+            status_filter_select = ui.select(
+                options=status_options,
+                label="Status",
+                value="",
+                on_change=lambda e: filters.__setitem__("status", e.value or ""),
+            ).classes("w-full")
+            due_filter_select = ui.select(
+                options=due_filter_options,
+                label="Due Date Filter",
+                value="",
+                on_change=lambda e: filters.__setitem__("due_filter", e.value or ""),
+            ).classes("w-full")
 
-                def reset_filters() -> None:
-                    filters["search"] = ""
-                    filters["customer_id"] = ""
-                    filters["status"] = ""
-                    filters["due_filter"] = ""
-                    search_input.value = ""
-                    customer_filter_select.value = ""
-                    status_filter_select.value = ""
-                    due_filter_select.value = ""
-                    search_input.update()
-                    customer_filter_select.update()
-                    status_filter_select.update()
-                    due_filter_select.update()
-                    refresh_page()
+            def reset_filters() -> None:
+                filters["search"] = ""
+                filters["customer_id"] = ""
+                filters["status"] = ""
+                filters["due_filter"] = ""
+                search_input.value = ""
+                customer_filter_select.value = ""
+                status_filter_select.value = ""
+                due_filter_select.value = ""
+                search_input.update()
+                customer_filter_select.update()
+                status_filter_select.update()
+                due_filter_select.update()
+                refresh_page()
 
-                ui.button("Apply Filters", on_click=refresh_page, icon="filter_alt").classes(
-                    "w-full"
-                )
-                ui.button("Reset Filters", on_click=reset_filters, icon="refresh").classes(
-                    "w-full q-mt-sm"
-                )
-
-            with ui.column().classes("flex-1 min-w-0"):
-                with ui.element("div").classes("w-full overflow-auto").style(
-                    "max-height: calc(100vh - 360px);"
-                ):
-                    debtors_table = ui.table(
-                        columns=debtors_columns,
-                        rows=[],
-                        row_key="id",
-                        pagination=15,
-                    ).classes("w-full")
-
-    with ui.row().classes("w-full items-stretch q-gutter-sm q-mt-md q-mb-md"):
-        with ui.card().classes("flex-1 min-w-[180px] q-pa-md"):
-            stat_active_debtors = ui.label("0").classes(
-                "text-h4 text-weight-bold text-center"
+            ui.button("Apply Filters", on_click=refresh_page, icon="filter_alt").classes(
+                "w-full"
             )
-            ui.label("Active Debtors").classes("text-subtitle2 text-grey-8 text-center")
-        with ui.card().classes("flex-1 min-w-[180px] q-pa-md"):
-            stat_total_outstanding = ui.label("0.00").classes(
-                "text-h4 text-weight-bold text-center"
-            )
-            ui.label("Total Outstanding Debt").classes(
-                "text-subtitle2 text-grey-8 text-center"
-            )
-        with ui.card().classes("flex-1 min-w-[180px] q-pa-md"):
-            stat_overdue_debts = ui.label("0").classes(
-                "text-h4 text-weight-bold text-center"
-            )
-            ui.label("Overdue Debts").classes("text-subtitle2 text-grey-8 text-center")
-        with ui.card().classes("flex-1 min-w-[180px] q-pa-md"):
-            stat_collected_this_month = ui.label("0.00").classes(
-                "text-h4 text-weight-bold text-center"
-            )
-            ui.label("Collected This Month").classes(
-                "text-subtitle2 text-grey-8 text-center"
+            ui.button("Reset Filters", on_click=reset_filters, icon="refresh").classes(
+                "w-full q-mt-sm"
             )
 
+        with data_table_card().classes("flex-1 min-w-0"):
+            with ui.element("div").classes("w-full overflow-auto").style(
+                "max-height: calc(100vh - 360px);"
+            ):
+                debtors_table = ui.table(
+                    columns=debtors_columns,
+                    rows=[],
+                    row_key="id",
+                    pagination=15,
+                ).classes("w-full")
+
+    with statistic_grid().classes("q-mt-md"):
+        stat_active_debtors = statistic_card("Active Debtors", icon="payments")
+        stat_total_outstanding = statistic_card("Total Outstanding Debt", value="0.00", icon="trending_down")
+        stat_overdue_debts = statistic_card("Overdue Debts", icon="event_busy")
+        stat_collected_this_month = statistic_card("Collected This Month", value="0.00", icon="savings")
+
+    style_status_column(debtors_table, "status")
+    add_table_empty_state(debtors_table, "No debtors found. All debts are settled.", icon="✅")
     debtors_table.add_slot(
         "body-cell-actions",
         """

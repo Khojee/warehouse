@@ -9,6 +9,16 @@ from sqlalchemy.orm import selectinload
 
 from database import SessionLocal, engine
 from models import Inventory, Product, ProductAlias, ProductCategory, StockMovement
+from pages.components import (
+    add_table_empty_state,
+    data_table_card,
+    filter_sidebar,
+    page_header,
+    search_panel,
+    statistic_card,
+    statistic_grid,
+    style_status_column,
+)
 from pages.layout import with_master_layout
 
 
@@ -230,7 +240,7 @@ def inventory_page() -> None:
         "stock_status": "",
     }
 
-    ui.label("Inventory").classes("text-h4 q-mb-md")
+    page_header("Inventory", "Track and adjust warehouse stock levels.")
 
     stat_total_products: Any = None
     stat_total_quantity: Any = None
@@ -363,19 +373,17 @@ def inventory_page() -> None:
 
             ui.button("Save", on_click=submit_remove_stock, color="primary")
 
-    with ui.row().classes("w-full q-mb-md justify-center"):
-        with ui.row().classes("w-full max-w-3xl items-end justify-center gap-2"):
+    with search_panel():
+        with ui.row().classes("w-full items-end no-wrap gap-3"):
             search_input = ui.input(
                 label="Search Product / Alias",
                 placeholder="Search by product name or alias",
                 on_change=lambda e: filters.__setitem__("search", e.value or ""),
-            ).classes("w-full max-w-2xl")
+            ).classes("flex-1 min-w-0")
             ui.button("Search", on_click=refresh_page, icon="search")
 
-    with ui.card().classes("w-full q-pa-md"):
-        with ui.row().classes("w-full items-start gap-4 no-wrap"):
-            with ui.column().classes("w-[280px] min-w-[250px] max-w-[300px]"):
-                ui.label("Filters").classes("text-subtitle1 q-mb-sm")
+    with ui.row().classes("w-full items-start gap-4 no-wrap"):
+        with filter_sidebar():
                 category_select = ui.select(
                     options=category_options,
                     label="Category",
@@ -425,37 +433,23 @@ def inventory_page() -> None:
                 ui.button("Apply Filters", on_click=refresh_page, icon="filter_alt").classes("w-full")
                 ui.button("Reset Filters", on_click=reset_filters, icon="refresh").classes("w-full q-mt-sm")
 
-            with ui.column().classes("flex-1 min-w-0"):
-                with ui.element("div").classes("w-full overflow-auto").style("max-height: calc(100vh - 360px);"):
-                    inventory_table = ui.table(
-                        columns=table_columns,
-                        rows=[],
-                        row_key="product_id",
-                        pagination=15,
-                    ).classes("w-full")
+        with data_table_card().classes("flex-1 min-w-0"):
+            with ui.element("div").classes("w-full overflow-auto").style("max-height: calc(100vh - 360px);"):
+                inventory_table = ui.table(
+                    columns=table_columns,
+                    rows=[],
+                    row_key="product_id",
+                    pagination=15,
+                ).classes("w-full")
 
-    with ui.row().classes("w-full items-stretch q-gutter-sm q-mt-md q-mb-md"):
-        with ui.card().classes("flex-1 min-w-[180px] q-pa-md"):
-            stat_total_products = ui.label("0").classes("text-h4 text-weight-bold text-center")
-            ui.label("Total Products").classes("text-subtitle2 text-grey-8 text-center")
-        with ui.card().classes("flex-1 min-w-[180px] q-pa-md"):
-            stat_total_quantity = ui.label("0").classes("text-h4 text-weight-bold text-center")
-            ui.label("Total Quantity").classes("text-subtitle2 text-grey-8 text-center")
-        with ui.card().classes("flex-1 min-w-[180px] q-pa-md"):
-            stat_low_stock = ui.label("0").classes("text-h4 text-weight-bold text-center")
-            ui.label("Low Stock Count").classes("text-subtitle2 text-grey-8 text-center")
-        with ui.card().classes("flex-1 min-w-[180px] q-pa-md"):
-            stat_out_of_stock = ui.label("0").classes("text-h4 text-weight-bold text-center")
-            ui.label("Out Of Stock Count").classes("text-subtitle2 text-grey-8 text-center")
+    with statistic_grid().classes("q-mt-md"):
+        stat_total_products = statistic_card("Total Products", icon="category")
+        stat_total_quantity = statistic_card("Total Quantity", icon="inventory_2")
+        stat_low_stock = statistic_card("Low Stock Count", icon="report_problem")
+        stat_out_of_stock = statistic_card("Out Of Stock Count", icon="remove_shopping_cart")
 
-    inventory_table.add_slot(
-        "body-cell-status",
-        """
-        <q-td :props="props">
-          <q-badge :color="props.row.status_color" :label="props.row.status" />
-        </q-td>
-        """,
-    )
+    style_status_column(inventory_table, "status")
+    add_table_empty_state(inventory_table, "No inventory data available.", icon="📦")
     inventory_table.add_slot(
         "body-cell-actions",
         """

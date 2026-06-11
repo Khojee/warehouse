@@ -10,6 +10,13 @@ from sqlalchemy.orm import selectinload
 
 from database import SessionLocal
 from models import Product, ProductCategory
+from pages.components import (
+    add_table_empty_state,
+    data_table_card,
+    filter_sidebar,
+    page_header,
+    search_panel,
+)
 from pages.layout import with_master_layout
 
 
@@ -253,7 +260,7 @@ def delete_product(product_id: int) -> bool:
 @ui.page("/products")
 @with_master_layout("Products")
 def products_page() -> None:
-    ui.label("Products").classes("text-h4 q-mb-md")
+    page_header("Products", "Manage your product catalog and pricing.")
 
     filters = {
         "name": "",
@@ -617,8 +624,7 @@ def products_page() -> None:
         add_dialog.open()
 
     with ui.row().classes("w-full items-start gap-4 no-wrap"):
-        with ui.card().classes("w-[280px] min-w-[250px] max-w-[300px]"):
-            ui.label("Filters").classes("text-subtitle1 q-mb-sm")
+        with filter_sidebar():
             category_select = ui.select(
                 options=category_filter_options,
                 label="Category",
@@ -669,19 +675,20 @@ def products_page() -> None:
             )
 
         with ui.column().classes("flex-1 min-w-0"):
-            with ui.row().classes("w-full q-mb-md items-center justify-between"):
-                with ui.row().classes("items-end gap-2 flex-1"):
+            with search_panel():
+                with ui.row().classes("w-full items-end no-wrap gap-3"):
                     ui.input(
                         label="Search Name",
                         placeholder="Name",
                         on_change=lambda e: filters.__setitem__("name", e.value or ""),
-                    ).classes("w-full max-w-md")
+                    ).classes("flex-1 min-w-0")
                     ui.button("Search", on_click=refresh_table, icon="search")
-                ui.button("Add Product", on_click=open_add_dialog, icon="add")
+                    ui.button("Add Product", on_click=open_add_dialog, icon="add")
 
-            table = ui.table(columns=columns, rows=[], row_key="id", pagination=10).classes(
-                "w-full"
-            )
+            with data_table_card():
+                table = ui.table(columns=columns, rows=[], row_key="id", pagination=10).classes(
+                    "w-full"
+                )
 
     table.add_slot(
         "body-cell-actions",
@@ -696,5 +703,6 @@ def products_page() -> None:
     )
     table.on("edit_product", lambda event: on_open_edit(event.args))
     table.on("delete_product", lambda event: on_open_delete(event.args))
+    add_table_empty_state(table, "No products found.", icon="📦")
 
     refresh_table()

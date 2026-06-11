@@ -8,6 +8,13 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from database import SessionLocal
 from models import Purchase, Supplier
+from pages.components import (
+    add_table_empty_state,
+    data_table_card,
+    filter_sidebar,
+    page_header,
+    search_panel,
+)
 from pages.layout import with_master_layout
 
 
@@ -136,7 +143,7 @@ def suppliers_page() -> None:
         "has_phone2": "",
     }
 
-    ui.label("Suppliers").classes("text-h4 q-mb-md")
+    page_header("Suppliers", "Manage supplier companies and contact details.")
 
     supplier_columns = [
         {"name": "company_name", "label": "Company Name", "field": "company_name", "align": "left"},
@@ -306,56 +313,54 @@ def suppliers_page() -> None:
     add_inputs["action_button"].on("click", submit_add)
     edit_inputs["action_button"].on("click", submit_edit)
 
-    with ui.row().classes("w-full q-mb-md justify-center"):
-        with ui.row().classes("w-full max-w-3xl items-end justify-center gap-2"):
+    with search_panel():
+        with ui.row().classes("w-full items-end no-wrap gap-3"):
             search_input = ui.input(
                 label="Search Supplier",
                 placeholder="Search company, contact, phone, telegram",
                 on_change=lambda e: filters.__setitem__("search", e.value or ""),
-            ).classes("w-full max-w-2xl")
+            ).classes("flex-1 min-w-0")
             ui.button("Search", on_click=refresh_table, icon="search")
             ui.button("Add Supplier", on_click=open_add_dialog, icon="add", color="primary")
 
-    with ui.card().classes("w-full q-pa-md"):
-        with ui.row().classes("w-full items-start gap-4 no-wrap"):
-            with ui.column().classes("w-[280px] min-w-[250px] max-w-[300px]"):
-                ui.label("Filters").classes("text-subtitle1 q-mb-sm")
-                telegram_select = ui.select(
-                    options=has_telegram_options,
-                    label="Has Telegram",
-                    value="",
-                    on_change=lambda e: filters.__setitem__("has_telegram", e.value or ""),
-                ).classes("w-full q-mb-sm")
-                phone2_select = ui.select(
-                    options=has_phone2_options,
-                    label="Has Phone 2",
-                    value="",
-                    on_change=lambda e: filters.__setitem__("has_phone2", e.value or ""),
-                ).classes("w-full q-mb-md")
+    with ui.row().classes("w-full items-start gap-4 no-wrap"):
+        with filter_sidebar():
+            telegram_select = ui.select(
+                options=has_telegram_options,
+                label="Has Telegram",
+                value="",
+                on_change=lambda e: filters.__setitem__("has_telegram", e.value or ""),
+            ).classes("w-full")
+            phone2_select = ui.select(
+                options=has_phone2_options,
+                label="Has Phone 2",
+                value="",
+                on_change=lambda e: filters.__setitem__("has_phone2", e.value or ""),
+            ).classes("w-full")
 
-                def reset_filters() -> None:
-                    filters["search"] = ""
-                    filters["has_telegram"] = ""
-                    filters["has_phone2"] = ""
-                    search_input.value = ""
-                    telegram_select.value = ""
-                    phone2_select.value = ""
-                    search_input.update()
-                    telegram_select.update()
-                    phone2_select.update()
-                    refresh_table()
+            def reset_filters() -> None:
+                filters["search"] = ""
+                filters["has_telegram"] = ""
+                filters["has_phone2"] = ""
+                search_input.value = ""
+                telegram_select.value = ""
+                phone2_select.value = ""
+                search_input.update()
+                telegram_select.update()
+                phone2_select.update()
+                refresh_table()
 
-                ui.button("Apply Filters", on_click=refresh_table, icon="filter_alt").classes("w-full")
-                ui.button("Reset Filters", on_click=reset_filters, icon="refresh").classes("w-full q-mt-sm")
+            ui.button("Apply Filters", on_click=refresh_table, icon="filter_alt").classes("w-full")
+            ui.button("Reset Filters", on_click=reset_filters, icon="refresh").classes("w-full q-mt-sm")
 
-            with ui.column().classes("flex-1 min-w-0"):
-                with ui.element("div").classes("w-full overflow-auto").style("max-height: calc(100vh - 300px);"):
-                    suppliers_table = ui.table(
-                        columns=supplier_columns,
-                        rows=[],
-                        row_key="id",
-                        pagination=15,
-                    ).classes("w-full")
+        with data_table_card().classes("flex-1 min-w-0"):
+            with ui.element("div").classes("w-full overflow-auto").style("max-height: calc(100vh - 300px);"):
+                suppliers_table = ui.table(
+                    columns=supplier_columns,
+                    rows=[],
+                    row_key="id",
+                    pagination=15,
+                ).classes("w-full")
 
     suppliers_table.add_slot(
         "body-cell-actions",
@@ -370,5 +375,6 @@ def suppliers_page() -> None:
     )
     suppliers_table.on("edit_supplier", lambda e: open_edit_dialog(e.args))
     suppliers_table.on("delete_supplier", lambda e: open_delete_dialog(e.args))
+    add_table_empty_state(suppliers_table, "No suppliers found.", icon="🏢")
 
     refresh_table()

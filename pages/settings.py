@@ -8,6 +8,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from database import SessionLocal
 from models import Setting
+from pages.components import page_header, surface_card
 from pages.layout import with_master_layout
 
 
@@ -59,9 +60,9 @@ def parse_low_stock_threshold(value: Any) -> str:
 @ui.page("/settings")
 @with_master_layout("Settings")
 def settings_page() -> None:
-    ui.label("Settings").classes("text-h4 q-mb-md")
+    page_header("Settings", "Configure company details and application defaults.")
 
-    with ui.card().classes("w-full q-pa-md"):
+    with surface_card().classes("flex flex-col gap-3"):
         ui.label("Company Settings").classes("text-h6 q-mb-sm")
         with ui.row().classes("w-full gap-2"):
             company_name_input = ui.input("Company Name").classes("col")
