@@ -1,6 +1,9 @@
 from nicegui import ui
 
+from core.i18n import set_locale
 from services.auth_service import ensure_users_table, get_storage_secret
+
+set_locale("uz")
 
 import pages.login
 import pages.dashboard

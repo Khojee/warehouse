@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import selectinload
 
+from core.i18n import t
 from database import SessionLocal
 from models import Product, ProductCategory
 from services import image_service
@@ -30,7 +31,7 @@ def _to_decimal(value: Any) -> Decimal:
     try:
         return Decimal(str(value).strip()).quantize(Decimal("0.01"))
     except (InvalidOperation, ValueError, AttributeError) as exc:
-        raise ValueError("current_price must be a valid number") from exc
+        raise ValueError(t("products.error.current_price_invalid")) from exc
 
 
 def _clean_text(value: Any) -> str | None:
@@ -152,12 +153,12 @@ def find_category_by_name(name: str) -> ProductCategory | None:
 def create_category(name: str) -> ProductCategory:
     cleaned_name = name.strip()
     if not cleaned_name:
-        raise ValueError("Category name cannot be empty.")
+        raise ValueError(t("products.error.category_name_empty"))
     if len(cleaned_name) < 2:
-        raise ValueError("Category name must be at least 2 characters.")
+        raise ValueError(t("products.error.category_name_short"))
 
     if find_category_by_name(cleaned_name) is not None:
-        raise ValueError("Category already exists.")
+        raise ValueError(t("products.error.category_exists"))
 
     with SessionLocal() as session:
         category = ProductCategory(name=cleaned_name)
@@ -170,29 +171,29 @@ def create_category(name: str) -> ProductCategory:
 def create_product(data: dict[str, Any]) -> Product:
     name = str(data.get("name", "")).strip()
     if not name:
-        raise ValueError("name is required")
+        raise ValueError(t("products.error.name_required"))
 
     unit = str(data.get("unit", "pcs")).strip() or "pcs"
     try:
         min_stock = int(data.get("min_stock", 0) or 0)
     except (TypeError, ValueError) as exc:
-        raise ValueError("min_stock must be an integer") from exc
+        raise ValueError(t("products.error.min_stock_integer")) from exc
     if min_stock < 0:
-        raise ValueError("min_stock cannot be negative")
+        raise ValueError(t("products.error.min_stock_negative"))
 
     with SessionLocal() as session:
         raw_category_id = str(data.get("category_id", "")).strip()
         if raw_category_id == OTHER_CATEGORY_OPTION:
-            raise ValueError("Please create and select a valid category.")
+            raise ValueError(t("products.error.create_select_category"))
         try:
             category_id = int(raw_category_id) if raw_category_id else None
         except ValueError as exc:
-            raise ValueError("Please select a valid category.") from exc
+            raise ValueError(t("products.error.select_valid_category")) from exc
         category_name: str | None = None
         if category_id is not None:
             category = session.get(ProductCategory, category_id)
             if category is None:
-                raise ValueError("Please select a valid category")
+                raise ValueError(t("products.error.select_valid_category_exclamation"))
             category_name = category.name
 
         product = Product(
@@ -217,14 +218,14 @@ def create_product(data: dict[str, Any]) -> Product:
 def update_product(product_id: int, data: dict[str, Any]) -> bool:
     name = str(data.get("name", "")).strip()
     if not name:
-        raise ValueError("name is required")
+        raise ValueError(t("products.error.name_required"))
 
     try:
         min_stock = int(data.get("min_stock", 0) or 0)
     except (TypeError, ValueError) as exc:
-        raise ValueError("min_stock must be an integer") from exc
+        raise ValueError(t("products.error.min_stock_integer")) from exc
     if min_stock < 0:
-        raise ValueError("min_stock cannot be negative")
+        raise ValueError(t("products.error.min_stock_negative"))
 
     with SessionLocal() as session:
         product = session.get(Product, product_id)
@@ -233,16 +234,16 @@ def update_product(product_id: int, data: dict[str, Any]) -> bool:
 
         raw_category_id = str(data.get("category_id", "")).strip()
         if raw_category_id == OTHER_CATEGORY_OPTION:
-            raise ValueError("Please create and select a valid category.")
+            raise ValueError(t("products.error.create_select_category"))
         try:
             category_id = int(raw_category_id) if raw_category_id else None
         except ValueError as exc:
-            raise ValueError("Please select a valid category.") from exc
+            raise ValueError(t("products.error.select_valid_category")) from exc
         category_name: str | None = None
         if category_id is not None:
             category = session.get(ProductCategory, category_id)
             if category is None:
-                raise ValueError("Please select a valid category")
+                raise ValueError(t("products.error.select_valid_category_exclamation"))
             category_name = category.name
 
         product.name = name
@@ -272,9 +273,9 @@ def delete_product(product_id: int) -> bool:
 
 
 @ui.page("/products")
-@with_master_layout("Products")
+@with_master_layout(t("products.title"))
 def products_page() -> None:
-    page_header("Products", "Manage your product catalog and pricing.")
+    page_header(t("products.title"), t("products.description"))
 
     filters = {
         "name": "",
@@ -287,33 +288,41 @@ def products_page() -> None:
     editing_product_id: int | None = None
 
     columns = [
-        {"name": "image", "label": "Image", "field": "image_url", "align": "center"},
-        {"name": "name", "label": "Name", "field": "name", "align": "left"},
-        {"name": "category", "label": "Category", "field": "category", "align": "left"},
-        {"name": "size", "label": "Size", "field": "size", "align": "left"},
-        {"name": "pressure", "label": "Pressure", "field": "pressure", "align": "left"},
-        {"name": "material", "label": "Material", "field": "material", "align": "left"},
-        {"name": "unit", "label": "Unit", "field": "unit", "align": "left"},
+        {"name": "image", "label": t("common.table.image"), "field": "image_url", "align": "center"},
+        {"name": "name", "label": t("products.field.name"), "field": "name", "align": "left"},
+        {"name": "category", "label": t("products.field.category"), "field": "category", "align": "left"},
+        {"name": "size", "label": t("products.field.size"), "field": "size", "align": "left"},
+        {"name": "pressure", "label": t("products.field.pressure"), "field": "pressure", "align": "left"},
+        {"name": "material", "label": t("products.field.material"), "field": "material", "align": "left"},
+        {"name": "unit", "label": t("products.field.unit"), "field": "unit", "align": "left"},
         {
             "name": "current_price",
-            "label": "Current Price",
+            "label": t("products.field.current_price"),
             "field": "current_price",
             "align": "right",
         },
-        {"name": "min_stock", "label": "Min Stock", "field": "min_stock", "align": "right"},
-        {"name": "description", "label": "Description", "field": "description", "align": "left"},
-        {"name": "actions", "label": "Actions", "field": "actions", "align": "center"},
+        {"name": "min_stock", "label": t("products.field.min_stock"), "field": "min_stock", "align": "right"},
+        {"name": "description", "label": t("products.field.description"), "field": "description", "align": "left"},
+        {"name": "actions", "label": t("common.table.actions"), "field": "actions", "align": "center"},
     ]
 
     table: Any = None
-    category_filter_options: dict[str, str] = {"": "All"}
-    category_form_options: dict[str, str] = {"": "Select category", OTHER_CATEGORY_OPTION: "➕ Other..."}
-    size_filter_options: dict[str, str] = {"": "All"}
-    pressure_filter_options: dict[str, str] = {"": "All"}
+    category_filter_options: dict[str, str] = {"": t("common.filter.all")}
+    category_form_options: dict[str, str] = {
+        "": t("products.option.select_category"),
+        OTHER_CATEGORY_OPTION: t("products.option.other_category"),
+    }
+    size_filter_options: dict[str, str] = {"": t("common.filter.all")}
+    pressure_filter_options: dict[str, str] = {"": t("common.filter.all")}
     stock_status_filter_options: dict[str, str] = {
-        "": "All",
-        "in_stock": "Normal",
-        "low_stock": "Low Stock",
+        "": t("common.filter.all"),
+        "in_stock": t("products.filter.normal"),
+        "low_stock": t("products.filter.low_stock"),
+    }
+    unit_options: dict[str, str] = {
+        t("products.unit.pcs"): t("products.unit.pcs"),
+        t("products.unit.kg"): t("products.unit.kg"),
+        t("products.unit.meter"): t("products.unit.meter"),
     }
 
     category_select: Any = None
@@ -330,18 +339,18 @@ def products_page() -> None:
 
             category_filter_options.clear()
             category_filter_options.update(
-                {"": "All", **{str(category.id): category.name for category in categories}}
+                {"": t("common.filter.all"), **{str(category.id): category.name for category in categories}}
             )
             category_form_options.clear()
             category_form_options.update(
                 {str(category.id): category.name for category in categories}
             )
-            category_form_options[""] = "Select category"
-            category_form_options[OTHER_CATEGORY_OPTION] = "➕ Other..."
+            category_form_options[""] = t("products.option.select_category")
+            category_form_options[OTHER_CATEGORY_OPTION] = t("products.option.other_category")
             size_filter_options.clear()
-            size_filter_options.update({"": "All", **{v: v for v in options["sizes"]}})
+            size_filter_options.update({"": t("common.filter.all"), **{v: v for v in options["sizes"]}})
             pressure_filter_options.clear()
-            pressure_filter_options.update({"": "All", **{v: v for v in options["pressures"]}})
+            pressure_filter_options.update({"": t("common.filter.all"), **{v: v for v in options["pressures"]}})
 
             if filters["category_id"] not in category_filter_options:
                 filters["category_id"] = ""
@@ -372,17 +381,17 @@ def products_page() -> None:
             )
             table.update()
         except SQLAlchemyError:
-            ui.notify("Failed to load products.", color="negative")
+            ui.notify(t("products.notify.load_failed"), color="negative")
 
     def build_form(dialog_title: str, form_target: str) -> tuple[ui.dialog, dict[str, Any]]:
         dialog = ui.dialog()
         with dialog, ui.card().classes("w-[700px] max-w-full"):
             ui.label(dialog_title).classes("text-h6")
             with ui.row().classes("w-full gap-2"):
-                name_input = ui.input("Name").classes("col")
+                name_input = ui.input(t("products.field.name")).classes("col")
                 category_input = ui.select(
                     options=category_form_options,
-                    label="Category",
+                    label=t("products.field.category"),
                     with_input=True,
                     value="",
                     on_change=lambda e: handle_category_select(
@@ -391,21 +400,21 @@ def products_page() -> None:
                     ),
                 ).classes("col")
             with ui.row().classes("w-full gap-2"):
-                size_input = ui.input("Size").classes("col")
-                pressure_input = ui.input("Pressure").classes("col")
+                size_input = ui.input(t("products.field.size")).classes("col")
+                pressure_input = ui.input(t("products.field.pressure")).classes("col")
             with ui.row().classes("w-full gap-2"):
-                material_input = ui.input("Material").classes("col")
+                material_input = ui.input(t("products.field.material")).classes("col")
                 unit_input = ui.select(
-                    options={"шт": "шт", "кг": "кг", "м": "м"},
-                    label="Unit",
-                    value="шт",
+                    options=unit_options,
+                    label=t("products.field.unit"),
+                    value=t("products.unit.pcs"),
                 ).classes("col")
             with ui.row().classes("w-full gap-2"):
-                current_price_input = ui.input("Current Price").classes("col")
-                min_stock_input = ui.number("Min Stock", value=0, precision=0).classes(
+                current_price_input = ui.input(t("products.field.current_price")).classes("col")
+                min_stock_input = ui.number(t("products.field.min_stock"), value=0, precision=0).classes(
                     "col"
                 )
-            description_input = ui.textarea("Description").classes("w-full")
+            description_input = ui.textarea(t("products.field.description")).classes("w-full")
 
             image_state: dict[str, Any] = {"data": None, "ext": None, "name": ""}
             image_status_label: Any = None
@@ -414,7 +423,7 @@ def products_page() -> None:
                 ext = image_service.extension_of(e.file.name)
                 if ext is None:
                     ui.notify(
-                        "Only PNG, JPG, JPEG and WEBP images are allowed.",
+                        t("products.image.invalid_format"),
                         color="warning",
                     )
                     image_upload.reset()
@@ -422,11 +431,11 @@ def products_page() -> None:
                 image_state["data"] = await e.file.read()
                 image_state["ext"] = ext
                 image_state["name"] = e.file.name
-                image_status_label.text = f"Selected image: {e.file.name}"
+                image_status_label.text = t("products.image.selected", filename=e.file.name)
 
             image_upload = (
                 ui.upload(
-                    label="Product Image",
+                    label=t("products.field.product_image"),
                     auto_upload=True,
                     max_file_size=10 * 1024 * 1024,
                     on_upload=handle_image_upload,
@@ -437,8 +446,8 @@ def products_page() -> None:
             image_status_label = ui.label("").classes("text-caption text-grey-7")
 
             with ui.row().classes("justify-end w-full q-mt-md"):
-                ui.button("Cancel", on_click=dialog.close, color="grey-6")
-                action_button = ui.button("Save")
+                ui.button(t("common.button.cancel"), on_click=dialog.close, color="grey-6")
+                action_button = ui.button(t("common.button.save"))
 
         inputs: dict[str, Any] = {
             "name": name_input,
@@ -457,8 +466,8 @@ def products_page() -> None:
         }
         return dialog, inputs
 
-    add_dialog, add_inputs = build_form("Add Product", "add")
-    edit_dialog, edit_inputs = build_form("Edit Product", "edit")
+    add_dialog, add_inputs = build_form(t("products.dialog.add_product"), "add")
+    edit_dialog, edit_inputs = build_form(t("products.dialog.edit_product"), "edit")
 
     def _form_data(inputs: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -477,7 +486,7 @@ def products_page() -> None:
         inputs["image_state"].update(data=None, ext=None, name="")
         inputs["image_upload"].reset()
         inputs["image_status"].text = (
-            "Current image will be replaced if you upload a new one."
+            t("products.image.will_replace")
             if current_image
             else ""
         )
@@ -502,7 +511,7 @@ def products_page() -> None:
             )
             image_service.upsert_primary_product_image(product_id, file_path)
         except (OSError, SQLAlchemyError):
-            ui.notify("Product saved, but the image upload failed.", color="warning")
+            ui.notify(t("products.notify.image_upload_failed"), color="warning")
 
     def _reset_form(inputs: dict[str, Any]) -> None:
         inputs["name"].value = ""
@@ -510,7 +519,7 @@ def products_page() -> None:
         inputs["size"].value = ""
         inputs["pressure"].value = ""
         inputs["material"].value = ""
-        inputs["unit"].value = "шт"
+        inputs["unit"].value = t("products.unit.pcs")
         inputs["current_price"].value = "0.00"
         inputs["min_stock"].value = 0
         inputs["description"].value = ""
@@ -529,37 +538,38 @@ def products_page() -> None:
         _clear_image_field(inputs, current_image=str(row.get("image_url") or ""))
 
     with ui.dialog() as create_category_dialog, ui.card().classes("w-[420px] max-w-full"):
-        ui.label("Create Category").classes("text-h6")
-        category_name_input = ui.input("Category Name").classes("w-full")
+        ui.label(t("products.dialog.create_category")).classes("text-h6")
+        category_name_input = ui.input(t("products.field.category_name")).classes("w-full")
         with ui.row().classes("justify-end w-full q-mt-sm"):
-            ui.button("Cancel", on_click=create_category_dialog.close, color="grey-6")
+            ui.button(t("common.button.cancel"), on_click=create_category_dialog.close, color="grey-6")
 
             def validate_new_category() -> None:
                 nonlocal pending_category_name
                 candidate = (category_name_input.value or "").strip()
                 if not candidate:
-                    ui.notify("Category name cannot be empty.", color="warning")
+                    ui.notify(t("products.notify.category_name_empty"), color="warning")
                     return
                 if len(candidate) < 2:
-                    ui.notify("Category name must be at least 2 characters.", color="warning")
+                    ui.notify(t("products.notify.category_name_short"), color="warning")
                     return
                 if find_category_by_name(candidate) is not None:
-                    ui.notify("Category already exists.", color="warning")
+                    ui.notify(t("products.notify.category_exists"), color="warning")
                     return
                 pending_category_name = candidate
-                confirmation_message.text = (
-                    f"Create category '{candidate}' ?"
+                confirmation_message.text = t(
+                    "products.dialog.confirm_create_category",
+                    name=candidate,
                 )
                 create_category_dialog.close()
                 confirm_create_dialog.open()
 
-            ui.button("Save", on_click=validate_new_category, color="primary")
+            ui.button(t("common.button.save"), on_click=validate_new_category, color="primary")
 
     with ui.dialog() as confirm_create_dialog, ui.card().classes("w-[430px] max-w-full"):
-        ui.label("Create Category").classes("text-h6")
+        ui.label(t("products.dialog.create_category")).classes("text-h6")
         confirmation_message = ui.label("")
         with ui.row().classes("justify-end w-full q-mt-sm"):
-            ui.button("Cancel", on_click=confirm_create_dialog.close, color="grey-6")
+            ui.button(t("common.button.cancel"), on_click=confirm_create_dialog.close, color="grey-6")
 
             def confirm_create_category() -> None:
                 nonlocal pending_category_name
@@ -570,7 +580,7 @@ def products_page() -> None:
                     confirm_create_dialog.close()
                     return
                 except SQLAlchemyError:
-                    ui.notify("Failed to create category.", color="negative")
+                    ui.notify(t("products.notify.category_create_failed"), color="negative")
                     confirm_create_dialog.close()
                     return
 
@@ -584,11 +594,11 @@ def products_page() -> None:
                 if pending_category_target == "edit":
                     edit_inputs["category"].value = str(created.id)
                     edit_inputs["category"].update()
-                ui.notify("Category created successfully.", color="positive")
+                ui.notify(t("products.notify.category_created"), color="positive")
                 pending_category_name = ""
                 confirm_create_dialog.close()
 
-            ui.button("Create", on_click=confirm_create_category, color="primary")
+            ui.button(t("common.button.create"), on_click=confirm_create_category, color="primary")
 
     def _normalize_category_choice(selected_value: Any) -> str:
         if selected_value is None:
@@ -610,7 +620,11 @@ def products_page() -> None:
     def handle_category_select(target: str, selected_value: Any) -> None:
         nonlocal pending_category_target
         value = _normalize_category_choice(selected_value)
-        if value not in {OTHER_CATEGORY_OPTION, "➕ Other...", "Other..."}:
+        if value not in {
+            OTHER_CATEGORY_OPTION,
+            t("products.option.other_category"),
+            t("products.option.other_category_alt"),
+        }:
             return
         pending_category_target = target
         target_inputs = add_inputs if target == "add" else edit_inputs
@@ -629,11 +643,11 @@ def products_page() -> None:
             _save_uploaded_image(add_inputs, product.id)
             add_dialog.close()
             refresh_table()
-            ui.notify("Product created successfully.", color="positive")
+            ui.notify(t("products.notify.product_created"), color="positive")
         except ValueError as exc:
             ui.notify(str(exc), color="warning")
         except SQLAlchemyError:
-            ui.notify("Failed to create product.", color="negative")
+            ui.notify(t("products.notify.product_create_failed"), color="negative")
 
     def on_open_edit(row: dict[str, Any]) -> None:
         nonlocal editing_product_id
@@ -648,27 +662,27 @@ def products_page() -> None:
     def on_update_product() -> None:
         nonlocal editing_product_id
         if editing_product_id is None:
-            ui.notify("No product selected.", color="warning")
+            ui.notify(t("products.notify.no_product_selected"), color="warning")
             return
 
         try:
             updated = update_product(editing_product_id, _form_data(edit_inputs))
             if not updated:
-                ui.notify("Product not found.", color="warning")
+                ui.notify(t("products.notify.product_not_found"), color="warning")
                 return
             _save_uploaded_image(edit_inputs, editing_product_id)
             edit_dialog.close()
             refresh_table()
-            ui.notify("Product updated successfully.", color="positive")
+            ui.notify(t("products.notify.product_updated"), color="positive")
         except ValueError as exc:
             ui.notify(str(exc), color="warning")
         except SQLAlchemyError:
-            ui.notify("Failed to update product.", color="negative")
+            ui.notify(t("products.notify.product_update_failed"), color="negative")
 
     with ui.dialog() as delete_dialog, ui.card():
-        delete_message = ui.label("Delete selected product?")
+        delete_message = ui.label(t("products.dialog.delete_product"))
         with ui.row().classes("justify-end w-full"):
-            ui.button("Cancel", on_click=delete_dialog.close, color="grey-6")
+            ui.button(t("common.button.cancel"), on_click=delete_dialog.close, color="grey-6")
 
             def confirm_delete() -> None:
                 nonlocal selected_row
@@ -678,22 +692,22 @@ def products_page() -> None:
                 try:
                     deleted = delete_product(int(selected_row["id"]))
                     if deleted:
-                        ui.notify("Product deleted successfully.", color="positive")
+                        ui.notify(t("products.notify.product_deleted"), color="positive")
                     else:
-                        ui.notify("Product not found.", color="warning")
+                        ui.notify(t("products.notify.product_not_found"), color="warning")
                     refresh_table()
                 except SQLAlchemyError:
-                    ui.notify("Failed to delete product.", color="negative")
+                    ui.notify(t("products.notify.product_delete_failed"), color="negative")
                 finally:
                     delete_dialog.close()
                     selected_row = None
 
-            ui.button("Delete", on_click=confirm_delete, color="negative")
+            ui.button(t("common.button.delete"), on_click=confirm_delete, color="negative")
 
     def on_open_delete(row: dict[str, Any]) -> None:
         nonlocal selected_row
         selected_row = row
-        delete_message.text = f'Delete product "{row["name"]}"?'
+        delete_message.text = t("products.dialog.delete_product_named", name=row["name"])
         delete_dialog.open()
 
     add_inputs["action_button"].on("click", on_add_product)
@@ -709,26 +723,26 @@ def products_page() -> None:
         with filter_sidebar():
             category_select = ui.select(
                 options=category_filter_options,
-                label="Category",
+                label=t("products.field.category"),
                 value="",
                 on_change=lambda e: filters.__setitem__("category_id", e.value or ""),
                 with_input=True,
             ).classes("w-full q-mb-sm")
             pressure_select = ui.select(
                 options=pressure_filter_options,
-                label="Pressure",
+                label=t("products.field.pressure"),
                 value="",
                 on_change=lambda e: filters.__setitem__("pressure", e.value or ""),
             ).classes("w-full q-mb-sm")
             size_select = ui.select(
                 options=size_filter_options,
-                label="Size",
+                label=t("products.field.size"),
                 value="",
                 on_change=lambda e: filters.__setitem__("size", e.value or ""),
             ).classes("w-full q-mb-sm")
             stock_status_select = ui.select(
                 options=stock_status_filter_options,
-                label="Stock Status",
+                label=t("products.filter.stock_status"),
                 value="",
                 on_change=lambda e: filters.__setitem__("stock_status", e.value or ""),
             ).classes("w-full q-mb-md")
@@ -749,10 +763,10 @@ def products_page() -> None:
                 stock_status_select.update()
                 refresh_table()
 
-            ui.button("Reset Filters", on_click=clear_filters, icon="refresh").classes(
+            ui.button(t("common.button.reset_filters"), on_click=clear_filters, icon="refresh").classes(
                 "w-full"
             )
-            ui.button("Apply Filters", on_click=refresh_table, icon="filter_alt").classes(
+            ui.button(t("common.button.apply_filters"), on_click=refresh_table, icon="filter_alt").classes(
                 "w-full q-mt-sm"
             )
 
@@ -760,12 +774,12 @@ def products_page() -> None:
             with search_panel():
                 with ui.row().classes("w-full items-end no-wrap gap-3"):
                     ui.input(
-                        label="Search Name",
-                        placeholder="Name",
+                        label=t("products.search.label"),
+                        placeholder=t("products.search.placeholder"),
                         on_change=lambda e: filters.__setitem__("name", e.value or ""),
                     ).classes("flex-1 min-w-0")
-                    ui.button("Search", on_click=refresh_table, icon="search")
-                    ui.button("Add Product", on_click=open_add_dialog, icon="add")
+                    ui.button(t("common.button.search"), on_click=refresh_table, icon="search")
+                    ui.button(t("products.button.add_product"), on_click=open_add_dialog, icon="add")
 
             with data_table_card():
                 table = ui.table(columns=columns, rows=[], row_key="id", pagination=10).classes(
@@ -795,6 +809,6 @@ def products_page() -> None:
     )
     table.on("edit_product", lambda event: on_open_edit(event.args))
     table.on("delete_product", lambda event: on_open_delete(event.args))
-    add_table_empty_state(table, "No products found.", icon="📦")
+    add_table_empty_state(table, t("products.empty.no_products"), icon="📦")
 
     refresh_table()

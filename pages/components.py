@@ -10,10 +10,8 @@ from typing import Any
 
 from nicegui import ui
 
+from core.i18n import badge_danger_values, badge_success_values, badge_warning_values, t
 
-_SUCCESS_VALUES = ["Paid", "In Stock", "Normal", "IN"]
-_WARNING_VALUES = ["Partially Paid", "Low Stock", "Active"]
-_DANGER_VALUES = ["Unpaid", "Out Of Stock", "Overdue", "OUT"]
 
 _COMPONENTS_CSS = """
 /* ============ FlowCore component system ============ */
@@ -369,11 +367,11 @@ def _ensure_styles() -> None:
 
 
 def _badge_class(value: str) -> str:
-    if value in _SUCCESS_VALUES:
+    if value in badge_success_values():
         return "fc-badge-success"
-    if value in _WARNING_VALUES:
+    if value in badge_warning_values():
         return "fc-badge-warning"
-    if value in _DANGER_VALUES:
+    if value in badge_danger_values():
         return "fc-badge-danger"
     return "fc-badge-neutral"
 
@@ -424,14 +422,25 @@ def status_badge(value: str) -> Any:
     return ui.label(value).classes(f"fc-badge {_badge_class(value)}")
 
 
+def _js_single_quoted_array(values: list[str]) -> str:
+    """Serialize *values* as a JS array safe inside HTML double-quoted attributes.
+
+    Python ``str(list)`` may emit double-quoted strings (e.g. ``"To'langan"``) which
+    terminate a ``:class="..."`` attribute and break Vue template compilation.
+    """
+    parts: list[str] = []
+    for value in values:
+        escaped = value.replace("\\", "\\\\").replace("'", "\\'")
+        parts.append(f"'{escaped}'")
+    return "[" + ", ".join(parts) + "]"
+
+
 def style_status_column(table: Any, column: str, field: str | None = None) -> None:
     """Render a table column as StatusBadge pills (client-side class mapping)."""
     field = field or column
-    # NOTE: these JS array literals are embedded inside a double-quoted Vue
-    # attribute, so they must only contain single quotes.
-    success = str(_SUCCESS_VALUES)
-    warning = str(_WARNING_VALUES)
-    danger = str(_DANGER_VALUES)
+    success = _js_single_quoted_array(badge_success_values())
+    warning = _js_single_quoted_array(badge_warning_values())
+    danger = _js_single_quoted_array(badge_danger_values())
     table.add_slot(
         f"body-cell-{column}",
         f"""
@@ -477,13 +486,14 @@ def search_panel() -> Any:
     return ui.element("div").classes("fc-search-panel")
 
 
-def filter_sidebar(title: str | None = "Filters") -> Any:
+def filter_sidebar(title: str | None = None) -> Any:
     """FilterSidebar: white rounded surface hosting filter controls."""
     _ensure_styles()
     sidebar = ui.element("div").classes("fc-filter-sidebar")
-    if title:
-        with sidebar:
-            ui.label(title).classes("fc-filter-title")
+    with sidebar:
+        ui.label(title if title is not None else t("common.filter.title")).classes(
+            "fc-filter-title"
+        )
     return sidebar
 
 

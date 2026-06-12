@@ -6,6 +6,7 @@ from nicegui import ui
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import SQLAlchemyError
 
+from core.i18n import t
 from database import SessionLocal
 from models import Purchase, Supplier
 from pages.components import (
@@ -75,9 +76,9 @@ def create_supplier(data: dict[str, Any]) -> Supplier:
     company_name = str(data.get("company_name", "")).strip()
     phone = str(data.get("phone", "")).strip()
     if not company_name:
-        raise ValueError("Company Name is required.")
+        raise ValueError(t("suppliers.error.company_name_required"))
     if not phone:
-        raise ValueError("Phone is required.")
+        raise ValueError(t("suppliers.error.phone_required"))
 
     with SessionLocal.begin() as session:
         supplier = Supplier(
@@ -99,9 +100,9 @@ def update_supplier(supplier_id: int, data: dict[str, Any]) -> bool:
     company_name = str(data.get("company_name", "")).strip()
     phone = str(data.get("phone", "")).strip()
     if not company_name:
-        raise ValueError("Company Name is required.")
+        raise ValueError(t("suppliers.error.company_name_required"))
     if not phone:
-        raise ValueError("Phone is required.")
+        raise ValueError(t("suppliers.error.phone_required"))
 
     with SessionLocal.begin() as session:
         supplier = session.get(Supplier, supplier_id)
@@ -128,14 +129,14 @@ def delete_supplier(supplier_id: int) -> bool:
             select(func.count(Purchase.id)).where(Purchase.supplier_id == supplier_id)
         )
         if has_purchases and int(has_purchases) > 0:
-            raise ValueError("Cannot delete supplier because purchase records exist.")
+            raise ValueError(t("suppliers.error.cannot_delete_has_purchases"))
 
         session.delete(supplier)
         return True
 
 
 @ui.page("/suppliers")
-@with_master_layout("Suppliers")
+@with_master_layout(t("suppliers.title"))
 def suppliers_page() -> None:
     filters = {
         "search": "",
@@ -143,22 +144,30 @@ def suppliers_page() -> None:
         "has_phone2": "",
     }
 
-    page_header("Suppliers", "Manage supplier companies and contact details.")
+    page_header(t("suppliers.title"), t("suppliers.description"))
 
     supplier_columns = [
-        {"name": "company_name", "label": "Company Name", "field": "company_name", "align": "left"},
-        {"name": "contact_person", "label": "Contact Person", "field": "contact_person", "align": "left"},
-        {"name": "phone", "label": "Phone", "field": "phone", "align": "left"},
-        {"name": "phone2", "label": "Phone 2", "field": "phone2", "align": "left"},
-        {"name": "telegram", "label": "Telegram", "field": "telegram", "align": "left"},
-        {"name": "address", "label": "Address", "field": "address", "align": "left"},
-        {"name": "notes", "label": "Notes", "field": "notes", "align": "left"},
-        {"name": "actions", "label": "Actions", "field": "actions", "align": "center"},
+        {"name": "company_name", "label": t("suppliers.field.company_name"), "field": "company_name", "align": "left"},
+        {"name": "contact_person", "label": t("suppliers.field.contact_person"), "field": "contact_person", "align": "left"},
+        {"name": "phone", "label": t("suppliers.field.phone"), "field": "phone", "align": "left"},
+        {"name": "phone2", "label": t("suppliers.field.phone2"), "field": "phone2", "align": "left"},
+        {"name": "telegram", "label": t("suppliers.field.telegram"), "field": "telegram", "align": "left"},
+        {"name": "address", "label": t("suppliers.field.address"), "field": "address", "align": "left"},
+        {"name": "notes", "label": t("common.table.notes"), "field": "notes", "align": "left"},
+        {"name": "actions", "label": t("common.table.actions"), "field": "actions", "align": "center"},
     ]
     suppliers_table: Any = None
 
-    has_telegram_options = {"": "All", "yes": "Has Telegram", "no": "No Telegram"}
-    has_phone2_options = {"": "All", "yes": "Has Phone 2", "no": "No Phone 2"}
+    has_telegram_options = {
+        "": t("common.filter.all"),
+        "yes": t("suppliers.filter.has_telegram_yes"),
+        "no": t("suppliers.filter.has_telegram_no"),
+    }
+    has_phone2_options = {
+        "": t("common.filter.all"),
+        "yes": t("suppliers.filter.has_phone2_yes"),
+        "no": t("suppliers.filter.has_phone2_no"),
+    }
 
     search_input: Any = None
     telegram_select: Any = None
@@ -175,25 +184,25 @@ def suppliers_page() -> None:
             )
             suppliers_table.update()
         except SQLAlchemyError:
-            ui.notify("Failed to load suppliers.", color="negative")
+            ui.notify(t("suppliers.notify.load_failed"), color="negative")
 
     def build_supplier_form(title: str) -> tuple[ui.dialog, dict[str, Any]]:
         dialog = ui.dialog()
         with dialog, ui.card().classes("w-[700px] max-w-full"):
             ui.label(title).classes("text-h6")
             with ui.row().classes("w-full gap-2"):
-                company_name = ui.input("Company Name *").classes("col")
-                contact_person = ui.input("Contact Person").classes("col")
+                company_name = ui.input(t("suppliers.field.company_name_required")).classes("col")
+                contact_person = ui.input(t("suppliers.field.contact_person")).classes("col")
             with ui.row().classes("w-full gap-2"):
-                phone = ui.input("Phone *").classes("col")
-                phone2 = ui.input("Phone 2").classes("col")
+                phone = ui.input(t("suppliers.field.phone_required")).classes("col")
+                phone2 = ui.input(t("suppliers.field.phone2")).classes("col")
             with ui.row().classes("w-full gap-2"):
-                telegram = ui.input("Telegram").classes("col")
-                address = ui.input("Address").classes("col")
-            notes = ui.textarea("Notes").classes("w-full")
+                telegram = ui.input(t("suppliers.field.telegram")).classes("col")
+                address = ui.input(t("suppliers.field.address")).classes("col")
+            notes = ui.textarea(t("common.table.notes")).classes("w-full")
             with ui.row().classes("justify-end w-full q-mt-sm"):
-                ui.button("Cancel", on_click=dialog.close, color="grey-6")
-                action_button = ui.button("Save", color="primary")
+                ui.button(t("common.button.cancel"), on_click=dialog.close, color="grey-6")
+                action_button = ui.button(t("common.button.save"), color="primary")
 
         return dialog, {
             "company_name": company_name,
@@ -235,8 +244,8 @@ def suppliers_page() -> None:
         inputs["address"].value = row["address"]
         inputs["notes"].value = row["notes"]
 
-    add_dialog, add_inputs = build_supplier_form("Add Supplier")
-    edit_dialog, edit_inputs = build_supplier_form("Edit Supplier")
+    add_dialog, add_inputs = build_supplier_form(t("suppliers.dialog.add_supplier"))
+    edit_dialog, edit_inputs = build_supplier_form(t("suppliers.dialog.edit_supplier"))
     edit_supplier_id: int | None = None
     delete_target: dict[str, Any] | None = None
 
@@ -249,11 +258,11 @@ def suppliers_page() -> None:
             create_supplier(form_data(add_inputs))
             add_dialog.close()
             refresh_table()
-            ui.notify("Supplier created successfully.", color="positive")
+            ui.notify(t("suppliers.notify.created"), color="positive")
         except ValueError as exc:
             ui.notify(str(exc), color="warning")
         except SQLAlchemyError:
-            ui.notify("Failed to create supplier.", color="negative")
+            ui.notify(t("suppliers.notify.create_failed"), color="negative")
 
     def open_edit_dialog(row: dict[str, Any]) -> None:
         nonlocal edit_supplier_id
@@ -264,25 +273,25 @@ def suppliers_page() -> None:
     def submit_edit() -> None:
         nonlocal edit_supplier_id
         if edit_supplier_id is None:
-            ui.notify("No supplier selected.", color="warning")
+            ui.notify(t("suppliers.notify.no_supplier_selected"), color="warning")
             return
         try:
             updated = update_supplier(edit_supplier_id, form_data(edit_inputs))
             if not updated:
-                ui.notify("Supplier not found.", color="warning")
+                ui.notify(t("suppliers.notify.not_found"), color="warning")
                 return
             edit_dialog.close()
             refresh_table()
-            ui.notify("Supplier updated successfully.", color="positive")
+            ui.notify(t("suppliers.notify.updated"), color="positive")
         except ValueError as exc:
             ui.notify(str(exc), color="warning")
         except SQLAlchemyError:
-            ui.notify("Failed to update supplier.", color="negative")
+            ui.notify(t("suppliers.notify.update_failed"), color="negative")
 
     with ui.dialog() as delete_dialog, ui.card():
-        delete_label = ui.label("Delete supplier?")
+        delete_label = ui.label(t("suppliers.dialog.delete_supplier"))
         with ui.row().classes("justify-end w-full q-mt-sm"):
-            ui.button("Cancel", on_click=delete_dialog.close, color="grey-6")
+            ui.button(t("common.button.cancel"), on_click=delete_dialog.close, color="grey-6")
 
             def confirm_delete() -> None:
                 nonlocal delete_target
@@ -292,22 +301,22 @@ def suppliers_page() -> None:
                 try:
                     deleted = delete_supplier(int(delete_target["id"]))
                     if deleted:
-                        ui.notify("Supplier deleted successfully.", color="positive")
+                        ui.notify(t("suppliers.notify.deleted"), color="positive")
                     else:
-                        ui.notify("Supplier not found.", color="warning")
+                        ui.notify(t("suppliers.notify.not_found"), color="warning")
                     refresh_table()
                     delete_dialog.close()
                 except ValueError as exc:
                     ui.notify(str(exc), color="warning")
                 except SQLAlchemyError:
-                    ui.notify("Failed to delete supplier.", color="negative")
+                    ui.notify(t("suppliers.notify.delete_failed"), color="negative")
 
-            ui.button("Delete", on_click=confirm_delete, color="negative")
+            ui.button(t("common.button.delete"), on_click=confirm_delete, color="negative")
 
     def open_delete_dialog(row: dict[str, Any]) -> None:
         nonlocal delete_target
         delete_target = row
-        delete_label.text = f'Delete supplier "{row["company_name"]}"?'
+        delete_label.text = t("suppliers.dialog.delete_supplier_named", name=row["company_name"])
         delete_dialog.open()
 
     add_inputs["action_button"].on("click", submit_add)
@@ -316,24 +325,24 @@ def suppliers_page() -> None:
     with search_panel():
         with ui.row().classes("w-full items-end no-wrap gap-3"):
             search_input = ui.input(
-                label="Search Supplier",
-                placeholder="Search company, contact, phone, telegram",
+                label=t("suppliers.search.label"),
+                placeholder=t("suppliers.search.placeholder"),
                 on_change=lambda e: filters.__setitem__("search", e.value or ""),
             ).classes("flex-1 min-w-0")
-            ui.button("Search", on_click=refresh_table, icon="search")
-            ui.button("Add Supplier", on_click=open_add_dialog, icon="add", color="primary")
+            ui.button(t("common.button.search"), on_click=refresh_table, icon="search")
+            ui.button(t("suppliers.button.add_supplier"), on_click=open_add_dialog, icon="add", color="primary")
 
     with ui.row().classes("w-full items-start gap-4 no-wrap"):
         with filter_sidebar():
             telegram_select = ui.select(
                 options=has_telegram_options,
-                label="Has Telegram",
+                label=t("suppliers.filter.has_telegram"),
                 value="",
                 on_change=lambda e: filters.__setitem__("has_telegram", e.value or ""),
             ).classes("w-full")
             phone2_select = ui.select(
                 options=has_phone2_options,
-                label="Has Phone 2",
+                label=t("suppliers.filter.has_phone2"),
                 value="",
                 on_change=lambda e: filters.__setitem__("has_phone2", e.value or ""),
             ).classes("w-full")
@@ -350,8 +359,8 @@ def suppliers_page() -> None:
                 phone2_select.update()
                 refresh_table()
 
-            ui.button("Apply Filters", on_click=refresh_table, icon="filter_alt").classes("w-full")
-            ui.button("Reset Filters", on_click=reset_filters, icon="refresh").classes("w-full q-mt-sm")
+            ui.button(t("common.button.apply_filters"), on_click=refresh_table, icon="filter_alt").classes("w-full")
+            ui.button(t("common.button.reset_filters"), on_click=reset_filters, icon="refresh").classes("w-full q-mt-sm")
 
         with data_table_card().classes("flex-1 min-w-0"):
             with ui.element("div").classes("w-full overflow-auto").style("max-height: calc(100vh - 300px);"):
@@ -375,6 +384,6 @@ def suppliers_page() -> None:
     )
     suppliers_table.on("edit_supplier", lambda e: open_edit_dialog(e.args))
     suppliers_table.on("delete_supplier", lambda e: open_delete_dialog(e.args))
-    add_table_empty_state(suppliers_table, "No suppliers found.", icon="🏢")
+    add_table_empty_state(suppliers_table, t("suppliers.empty.no_suppliers"), icon="🏢")
 
     refresh_table()

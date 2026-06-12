@@ -20,7 +20,8 @@ from locales.en import MESSAGES as EN_MESSAGES
 from locales.uz import MESSAGES as UZ_MESSAGES
 
 SUPPORTED_LOCALES: tuple[str, ...] = ("en", "uz")
-DEFAULT_LOCALE = "en"
+DEFAULT_LOCALE = "uz"
+FALLBACK_LOCALE = "en"
 
 _CATALOGS: dict[str, dict[str, str]] = {
     "en": EN_MESSAGES,
@@ -64,7 +65,7 @@ def t(key: str, /, **kwargs: Any) -> str:
     """
     catalog = get_catalog()
     text = catalog.get(key)
-    if text is None and _current_locale != DEFAULT_LOCALE:
+    if text is None and _current_locale != FALLBACK_LOCALE:
         text = EN_MESSAGES.get(key)
     if text is None:
         text = key
@@ -79,3 +80,83 @@ def t(key: str, /, **kwargs: Any) -> str:
 def has_key(key: str, locale: str | None = None) -> bool:
     """Return True if *key* exists in the given locale catalog."""
     return key in get_catalog(locale)
+
+
+_PAYMENT_STATUS_KEYS: dict[str, str] = {
+    "Paid": "status.payment.paid",
+    "Partially Paid": "status.payment.partially_paid",
+    "Unpaid": "status.payment.unpaid",
+}
+
+_STOCK_STATUS_KEYS: dict[str, str] = {
+    "In Stock": "status.stock.in_stock",
+    "Low Stock": "status.stock.low_stock",
+    "Out Of Stock": "status.stock.out_of_stock",
+    "Normal": "status.stock.normal",
+}
+
+_DEBT_STATUS_KEYS: dict[str, str] = {
+    "Active": "status.debt.active",
+    "Paid": "status.debt.paid",
+    "Overdue": "status.debt.overdue",
+    "Open": "status.debt.active",
+}
+
+_MOVEMENT_TYPE_KEYS: dict[str, str] = {
+    "IN": "status.movement.in",
+    "OUT": "status.movement.out",
+}
+
+
+def payment_status_label(value: str) -> str:
+    """Translate a stored payment status value for display."""
+    key = _PAYMENT_STATUS_KEYS.get(value or "")
+    return t(key) if key else (value or "")
+
+
+def stock_status_label(value: str) -> str:
+    """Translate a stock status value for display."""
+    key = _STOCK_STATUS_KEYS.get(value or "")
+    return t(key) if key else (value or "")
+
+
+def debt_status_label(value: str) -> str:
+    """Translate a debt status value for display."""
+    key = _DEBT_STATUS_KEYS.get(value or "")
+    return t(key) if key else (value or "")
+
+
+def movement_type_label(value: str) -> str:
+    """Translate a stock movement type for display."""
+    key = _MOVEMENT_TYPE_KEYS.get(value or "")
+    return t(key) if key else (value or "")
+
+
+def badge_success_values() -> list[str]:
+    """Return localized status strings that render as success badges."""
+    return [
+        t("status.payment.paid"),
+        t("status.stock.in_stock"),
+        t("status.stock.normal"),
+        t("status.movement.in"),
+        t("status.debt.paid"),
+    ]
+
+
+def badge_warning_values() -> list[str]:
+    """Return localized status strings that render as warning badges."""
+    return [
+        t("status.payment.partially_paid"),
+        t("status.stock.low_stock"),
+        t("status.debt.active"),
+    ]
+
+
+def badge_danger_values() -> list[str]:
+    """Return localized status strings that render as danger badges."""
+    return [
+        t("status.payment.unpaid"),
+        t("status.stock.out_of_stock"),
+        t("status.debt.overdue"),
+        t("status.movement.out"),
+    ]

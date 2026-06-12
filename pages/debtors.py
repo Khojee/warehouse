@@ -9,6 +9,7 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import selectinload
 
+from core.i18n import debt_status_label, t
 from database import SessionLocal
 from models import Customer, Debtor, DebtorPayment, Sale
 from pages.components import (
@@ -30,7 +31,7 @@ def _to_decimal(value: Any) -> Decimal:
     try:
         return Decimal(str(value).strip()).quantize(Decimal("0.01"))
     except (InvalidOperation, ValueError, AttributeError) as exc:
-        raise ValueError("Invalid monetary value.") from exc
+        raise ValueError(t("debtors.error.invalid_monetary_value")) from exc
 
 
 def _clean_text(value: Any) -> str | None:
@@ -51,7 +52,7 @@ def load_customer_options() -> dict[str, str]:
         customers = session.scalars(
             select(Customer).order_by(func.lower(Customer.full_name).asc())
         ).all()
-    return {"": "All", **{str(item.id): item.full_name for item in customers}}
+    return {"": t("common.filter.all"), **{str(item.id): item.full_name for item in customers}}
 
 
 def load_debtor_rows(filters: dict[str, str]) -> list[dict[str, Any]]:
@@ -99,19 +100,23 @@ def load_debtor_rows(filters: dict[str, str]) -> list[dict[str, Any]]:
 
         debtors = session.scalars(stmt).all()
 
-    return [
-        {
-            "id": debtor.id,
-            "customer": debtor.customer.full_name if debtor.customer else "",
-            "sale_number": debtor.sale.sale_number if debtor.sale else "",
-            "total_debt": f"{debtor.total_debt:.2f}",
-            "paid_amount": f"{debtor.paid_amount:.2f}",
-            "remaining_amount": f"{debtor.remaining_amount:.2f}",
-            "due_date": debtor.due_date.isoformat() if debtor.due_date else "-",
-            "status": _status_from_remaining(debtor.remaining_amount),
-        }
-        for debtor in debtors
-    ]
+    rows: list[dict[str, Any]] = []
+    for debtor in debtors:
+        status_code = _status_from_remaining(debtor.remaining_amount)
+        rows.append(
+            {
+                "id": debtor.id,
+                "customer": debtor.customer.full_name if debtor.customer else "",
+                "sale_number": debtor.sale.sale_number if debtor.sale else "",
+                "total_debt": f"{debtor.total_debt:.2f}",
+                "paid_amount": f"{debtor.paid_amount:.2f}",
+                "remaining_amount": f"{debtor.remaining_amount:.2f}",
+                "due_date": debtor.due_date.isoformat() if debtor.due_date else t("common.placeholder.dash"),
+                "status_code": status_code,
+                "status": debt_status_label(status_code),
+            }
+        )
+    return rows
 
 
 def load_dashboard_stats() -> dict[str, str]:
@@ -177,6 +182,7 @@ def load_debtor_detail(debtor_id: int) -> dict[str, Any] | None:
             key=lambda p: (p.payment_date, p.id),
             reverse=True,
         )
+        status_code = _status_from_remaining(debtor.remaining_amount)
         return {
             "customer": debtor.customer.full_name if debtor.customer else "",
             "customer_phone": debtor.customer.phone if debtor.customer else "",
@@ -187,8 +193,9 @@ def load_debtor_detail(debtor_id: int) -> dict[str, Any] | None:
             "total_debt": f"{debtor.total_debt:.2f}",
             "paid_amount": f"{debtor.paid_amount:.2f}",
             "remaining_amount": f"{debtor.remaining_amount:.2f}",
-            "due_date": debtor.due_date.isoformat() if debtor.due_date else "-",
-            "status": _status_from_remaining(debtor.remaining_amount),
+            "due_date": debtor.due_date.isoformat() if debtor.due_date else t("common.placeholder.dash"),
+            "status_code": status_code,
+            "status": debt_status_label(status_code),
             "payments": [
                 {
                     "id": payment.id,
@@ -205,26 +212,26 @@ def load_debtor_detail(debtor_id: int) -> dict[str, Any] | None:
 def receive_debtor_payment(data: dict[str, Any]) -> None:
     debtor_id_raw = str(data.get("debtor_id", "")).strip()
     if not debtor_id_raw:
-        raise ValueError("Debtor is required.")
+        raise ValueError(t("debtors.error.debtor_required"))
     amount = _to_decimal(data.get("amount", "0"))
     if amount <= Decimal("0.00"):
-        raise ValueError("Payment amount must be greater than zero.")
+        raise ValueError(t("debtors.error.payment_amount_positive"))
     payment_date_raw = str(data.get("payment_date", "")).strip()
     if not payment_date_raw:
-        raise ValueError("Payment date is required.")
+        raise ValueError(t("debtors.error.payment_date_required"))
     try:
         payment_dt = datetime.strptime(payment_date_raw, "%Y-%m-%d")
     except ValueError as exc:
-        raise ValueError("Payment date must be valid.") from exc
+        raise ValueError(t("debtors.error.payment_date_invalid")) from exc
 
     with SessionLocal.begin() as session:
         debtor = session.get(Debtor, int(debtor_id_raw))
         if debtor is None:
-            raise ValueError("Debtor not found.")
+            raise ValueError(t("debtors.error.debtor_not_found"))
         if debtor.remaining_amount <= Decimal("0.00"):
-            raise ValueError("This debt is already fully paid.")
+            raise ValueError(t("debtors.error.already_fully_paid"))
         if amount > debtor.remaining_amount:
-            raise ValueError("Payment amount cannot exceed remaining amount.")
+            raise ValueError(t("debtors.error.payment_exceeds_remaining"))
 
         payment = DebtorPayment(
             debtor_id=debtor.id,
@@ -245,29 +252,37 @@ def receive_debtor_payment(data: dict[str, Any]) -> None:
 
 
 @ui.page("/debtors")
-@with_master_layout("Debtors")
+@with_master_layout(t("debtors.title"))
 def debtors_page() -> None:
     filters = {"search": "", "customer_id": "", "status": "", "due_filter": ""}
-    status_options = {"": "All", "Active": "Active", "Paid": "Paid"}
-    due_filter_options = {"": "All", "overdue": "Overdue", "due_today": "Due Today"}
+    status_options = {
+        "": t("common.filter.all"),
+        "Active": debt_status_label("Active"),
+        "Paid": debt_status_label("Paid"),
+    }
+    due_filter_options = {
+        "": t("common.filter.all"),
+        "overdue": t("debtors.filter.overdue"),
+        "due_today": t("debtors.filter.due_today"),
+    }
     customer_options = load_customer_options()
 
-    page_header("Debtors", "Monitor outstanding debts and record payments.")
+    page_header(t("debtors.title"), t("debtors.description"))
 
     debtors_columns = [
-        {"name": "customer", "label": "Customer", "field": "customer", "align": "left"},
-        {"name": "sale_number", "label": "Sale Number", "field": "sale_number", "align": "left"},
-        {"name": "total_debt", "label": "Total Debt", "field": "total_debt", "align": "right"},
-        {"name": "paid_amount", "label": "Paid Amount", "field": "paid_amount", "align": "right"},
+        {"name": "customer", "label": t("debtors.filter.customer"), "field": "customer", "align": "left"},
+        {"name": "sale_number", "label": t("debtors.table.sale_number"), "field": "sale_number", "align": "left"},
+        {"name": "total_debt", "label": t("debtors.table.total_debt"), "field": "total_debt", "align": "right"},
+        {"name": "paid_amount", "label": t("debtors.table.paid_amount"), "field": "paid_amount", "align": "right"},
         {
             "name": "remaining_amount",
-            "label": "Remaining Amount",
+            "label": t("debtors.table.remaining_amount"),
             "field": "remaining_amount",
             "align": "right",
         },
-        {"name": "due_date", "label": "Due Date", "field": "due_date", "align": "left"},
-        {"name": "status", "label": "Status", "field": "status", "align": "center"},
-        {"name": "actions", "label": "Actions", "field": "actions", "align": "center"},
+        {"name": "due_date", "label": t("debtors.table.due_date"), "field": "due_date", "align": "left"},
+        {"name": "status", "label": t("common.table.status"), "field": "status", "align": "center"},
+        {"name": "actions", "label": t("common.table.actions"), "field": "actions", "align": "center"},
     ]
     debtors_table: Any = None
     search_input: Any = None
@@ -299,17 +314,17 @@ def debtors_page() -> None:
             stat_overdue_debts.text = stats["overdue_debts"]
             stat_collected_this_month.text = stats["collected_this_month"]
         except SQLAlchemyError:
-            ui.notify("Failed to load debtors.", color="negative")
+            ui.notify(t("debtors.notify.load_failed"), color="negative")
 
     with ui.dialog() as details_dialog, ui.card().classes("w-[1000px] max-w-full"):
-        details_title = ui.label("Debtor Details").classes("text-h6")
+        details_title = ui.label(t("debtors.dialog.details")).classes("text-h6")
         debtor_info_line = ui.label("")
         summary_info_line = ui.label("")
         payment_columns = [
-            {"name": "payment_date", "label": "Payment Date", "field": "payment_date", "align": "left"},
-            {"name": "amount", "label": "Amount", "field": "amount", "align": "right"},
-            {"name": "payment_type", "label": "Payment Type", "field": "payment_type", "align": "left"},
-            {"name": "notes", "label": "Notes", "field": "notes", "align": "left"},
+            {"name": "payment_date", "label": t("debtors.table.payment_date"), "field": "payment_date", "align": "left"},
+            {"name": "amount", "label": t("debtors.field.amount"), "field": "amount", "align": "right"},
+            {"name": "payment_type", "label": t("debtors.field.payment_type"), "field": "payment_type", "align": "left"},
+            {"name": "notes", "label": t("common.table.notes"), "field": "notes", "align": "left"},
         ]
         payment_history_table = ui.table(
             columns=payment_columns,
@@ -318,22 +333,22 @@ def debtors_page() -> None:
             pagination=10,
         ).classes("w-full")
         with ui.row().classes("justify-end w-full q-mt-sm"):
-            ui.button("Close", on_click=details_dialog.close, color="grey-6")
+            ui.button(t("common.button.close"), on_click=details_dialog.close, color="grey-6")
 
     selected_debtor: dict[str, Any] | None = None
     with ui.dialog() as payment_dialog, ui.card().classes("w-[500px] max-w-full"):
-        ui.label("Receive Payment").classes("text-h6")
+        ui.label(t("debtors.dialog.receive_payment")).classes("text-h6")
         payment_info_line = ui.label("")
         payment_remaining_line = ui.label("")
         receive_date_input = ui.input(
-            "Payment Date",
+            t("debtors.field.payment_date"),
             value=datetime.now().strftime("%Y-%m-%d"),
         ).props("type=date").classes("w-full")
-        receive_amount_input = ui.input("Amount").classes("w-full")
-        receive_type_input = ui.input("Payment Type").classes("w-full")
-        receive_notes_input = ui.textarea("Notes").classes("w-full")
+        receive_amount_input = ui.input(t("debtors.field.amount")).classes("w-full")
+        receive_type_input = ui.input(t("debtors.field.payment_type")).classes("w-full")
+        receive_notes_input = ui.textarea(t("common.table.notes")).classes("w-full")
         with ui.row().classes("justify-end w-full q-mt-sm"):
-            ui.button("Cancel", on_click=payment_dialog.close, color="grey-6")
+            ui.button(t("common.button.cancel"), on_click=payment_dialog.close, color="grey-6")
 
             def submit_receive_payment() -> None:
                 nonlocal selected_debtor
@@ -349,31 +364,37 @@ def debtors_page() -> None:
                             "notes": receive_notes_input.value,
                         }
                     )
-                    ui.notify("Payment recorded successfully.", color="positive")
+                    ui.notify(t("debtors.notify.payment_recorded"), color="positive")
                     payment_dialog.close()
                     refresh_page()
                 except ValueError as exc:
                     ui.notify(str(exc), color="warning")
                 except SQLAlchemyError:
-                    ui.notify("Failed to record payment.", color="negative")
+                    ui.notify(t("debtors.notify.payment_failed"), color="negative")
 
-            ui.button("Save Payment", on_click=submit_receive_payment, color="primary")
+            ui.button(t("common.button.save_payment"), on_click=submit_receive_payment, color="primary")
 
     def open_details(row: dict[str, Any]) -> None:
         detail = load_debtor_detail(int(row["id"]))
         if detail is None:
-            ui.notify("Debtor not found.", color="warning")
+            ui.notify(t("debtors.notify.not_found"), color="warning")
             return
 
-        details_title.text = f'Debtor Details: {detail["sale_number"]}'
-        debtor_info_line.text = (
-            f'Customer: {detail["customer"]} ({detail["customer_phone"] or "-"}) | '
-            f'Sale: {detail["sale_number"]} | Sale Date: {detail["sale_date"]}'
+        details_title.text = t("debtors.dialog.details_sale", sale_number=detail["sale_number"])
+        debtor_info_line.text = t(
+            "debtors.details.customer_info",
+            customer=detail["customer"],
+            phone=detail["customer_phone"] or t("common.placeholder.dash"),
+            sale_number=detail["sale_number"],
+            sale_date=detail["sale_date"],
         )
-        summary_info_line.text = (
-            f'Total: {detail["total_debt"]} | Paid: {detail["paid_amount"]} | '
-            f'Remaining: {detail["remaining_amount"]} | Due: {detail["due_date"]} | '
-            f'Status: {detail["status"]}'
+        summary_info_line.text = t(
+            "debtors.details.summary",
+            total=detail["total_debt"],
+            paid=detail["paid_amount"],
+            remaining=detail["remaining_amount"],
+            due_date=detail["due_date"],
+            status=detail["status"],
         )
         payment_history_table.rows = detail["payments"]
         payment_history_table.update()
@@ -381,14 +402,19 @@ def debtors_page() -> None:
 
     def open_receive_payment(row: dict[str, Any]) -> None:
         nonlocal selected_debtor
-        if str(row["status"]).strip() == "Paid":
-            ui.notify("This debt is already fully paid.", color="warning")
+        if str(row.get("status_code", "")).strip() == "Paid":
+            ui.notify(t("debtors.notify.already_paid"), color="warning")
             return
         selected_debtor = row
-        payment_info_line.text = (
-            f'Customer: {row["customer"]} | Sale: {row["sale_number"]}'
+        payment_info_line.text = t(
+            "debtors.payment.customer_sale",
+            customer=row["customer"],
+            sale_number=row["sale_number"],
         )
-        payment_remaining_line.text = f'Remaining Amount: {row["remaining_amount"]}'
+        payment_remaining_line.text = t(
+            "debtors.payment.remaining_amount",
+            amount=row["remaining_amount"],
+        )
         receive_date_input.value = datetime.now().strftime("%Y-%m-%d")
         receive_amount_input.value = ""
         receive_type_input.value = ""
@@ -398,30 +424,30 @@ def debtors_page() -> None:
     with search_panel():
         with ui.row().classes("w-full items-end no-wrap gap-3"):
             search_input = ui.input(
-                label="Search Customer / Sale Number",
-                placeholder="Search by customer or sale number",
+                label=t("debtors.search.label"),
+                placeholder=t("debtors.search.placeholder"),
                 on_change=lambda e: filters.__setitem__("search", e.value or ""),
             ).classes("flex-1 min-w-0")
-            ui.button("Search", on_click=refresh_page, icon="search")
+            ui.button(t("common.button.search"), on_click=refresh_page, icon="search")
 
     with ui.row().classes("w-full items-start gap-4 no-wrap"):
         with filter_sidebar():
             customer_filter_select = ui.select(
                 options=customer_options,
-                label="Customer",
+                label=t("debtors.filter.customer"),
                 value="",
                 with_input=True,
                 on_change=lambda e: filters.__setitem__("customer_id", e.value or ""),
             ).classes("w-full")
             status_filter_select = ui.select(
                 options=status_options,
-                label="Status",
+                label=t("debtors.filter.status"),
                 value="",
                 on_change=lambda e: filters.__setitem__("status", e.value or ""),
             ).classes("w-full")
             due_filter_select = ui.select(
                 options=due_filter_options,
-                label="Due Date Filter",
+                label=t("debtors.filter.due_date"),
                 value="",
                 on_change=lambda e: filters.__setitem__("due_filter", e.value or ""),
             ).classes("w-full")
@@ -441,10 +467,10 @@ def debtors_page() -> None:
                 due_filter_select.update()
                 refresh_page()
 
-            ui.button("Apply Filters", on_click=refresh_page, icon="filter_alt").classes(
+            ui.button(t("common.button.apply_filters"), on_click=refresh_page, icon="filter_alt").classes(
                 "w-full"
             )
-            ui.button("Reset Filters", on_click=reset_filters, icon="refresh").classes(
+            ui.button(t("common.button.reset_filters"), on_click=reset_filters, icon="refresh").classes(
                 "w-full q-mt-sm"
             )
 
@@ -460,13 +486,13 @@ def debtors_page() -> None:
                 ).classes("w-full")
 
     with statistic_grid().classes("q-mt-md"):
-        stat_active_debtors = statistic_card("Active Debtors", icon="payments")
-        stat_total_outstanding = statistic_card("Total Outstanding Debt", value="0.00", icon="trending_down")
-        stat_overdue_debts = statistic_card("Overdue Debts", icon="event_busy")
-        stat_collected_this_month = statistic_card("Collected This Month", value="0.00", icon="savings")
+        stat_active_debtors = statistic_card(t("debtors.stat.active_debtors"), icon="payments")
+        stat_total_outstanding = statistic_card(t("debtors.stat.total_outstanding"), value="0.00", icon="trending_down")
+        stat_overdue_debts = statistic_card(t("debtors.stat.overdue_debts"), icon="event_busy")
+        stat_collected_this_month = statistic_card(t("debtors.stat.collected_this_month"), value="0.00", icon="savings")
 
     style_status_column(debtors_table, "status")
-    add_table_empty_state(debtors_table, "No debtors found. All debts are settled.", icon="✅")
+    add_table_empty_state(debtors_table, t("debtors.empty.all_settled"), icon="✅")
     debtors_table.add_slot(
         "body-cell-actions",
         """
@@ -482,4 +508,3 @@ def debtors_page() -> None:
     debtors_table.on("receive_payment", lambda e: open_receive_payment(e.args))
 
     refresh_page()
-

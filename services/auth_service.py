@@ -20,6 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
 from database import DB_PATH, SessionLocal, engine
+from core.i18n import t
 from models import Base, User
 
 
@@ -29,8 +30,8 @@ SESSION_TIMEOUT_SECONDS = 15 * 60
 LOCK_THRESHOLD = 3
 LOCK_MINUTES = 15
 
-INVALID_MESSAGE = "Invalid username or password."
-LOCKED_MESSAGE = "Account temporarily locked. Try again later."
+INVALID_MESSAGE = "auth.error.invalid_credentials"
+LOCKED_MESSAGE = "auth.error.account_locked"
 
 DEFAULT_ADMIN_USERNAME = "admin"
 DEFAULT_ADMIN_PASSWORD = "admin123"
@@ -146,10 +147,10 @@ def _verify_credentials(session: Any, username: str, password: str) -> tuple[Use
 
     if user is None:
         bcrypt.checkpw(password.encode("utf-8"), _DUMMY_HASH)
-        return None, INVALID_MESSAGE
+        return None, t(INVALID_MESSAGE)
 
     if user.locked_until is not None and user.locked_until > now:
-        return None, LOCKED_MESSAGE
+        return None, t(LOCKED_MESSAGE)
 
     password_ok = verify_password(password, user.password_hash)
     if not password_ok or not user.is_active:
@@ -157,8 +158,8 @@ def _verify_credentials(session: Any, username: str, password: str) -> tuple[Use
         if user.failed_attempts >= LOCK_THRESHOLD:
             user.locked_until = now + timedelta(minutes=LOCK_MINUTES)
             user.failed_attempts = 0
-            return None, LOCKED_MESSAGE
-        return None, INVALID_MESSAGE
+            return None, t(LOCKED_MESSAGE)
+        return None, t(INVALID_MESSAGE)
 
     return user, ""
 
@@ -171,7 +172,7 @@ def authenticate(username: str, password: str) -> tuple[bool, str]:
     username = (username or "").strip()
     password = password or ""
     if not username or not password:
-        return False, INVALID_MESSAGE
+        return False, t(INVALID_MESSAGE)
 
     try:
         with SessionLocal.begin() as session:
@@ -185,7 +186,7 @@ def authenticate(username: str, password: str) -> tuple[bool, str]:
             login_session(user)
             return True, ""
     except SQLAlchemyError:
-        return False, "Login failed. Please try again."
+        return False, t("auth.error.login_failed")
 
 
 def change_credentials(
@@ -207,9 +208,9 @@ def change_credentials(
     confirm_password = confirm_password or ""
 
     if not current_username or not current_password or not new_username or not new_password:
-        return False, "All fields are required."
+        return False, t("auth.error.all_fields_required")
     if new_password != confirm_password:
-        return False, "New Password and Confirm New Password do not match."
+        return False, t("auth.error.password_mismatch")
 
     try:
         with SessionLocal.begin() as session:
@@ -221,12 +222,12 @@ def change_credentials(
                 select(User).where(User.username == new_username).where(User.id != user.id)
             )
             if taken is not None:
-                return False, "New username is already taken."
+                return False, t("auth.error.username_taken")
 
             user.username = new_username
             user.password_hash = hash_password(new_password)
             user.failed_attempts = 0
             user.locked_until = None
-            return True, "Credentials updated successfully."
+            return True, t("auth.success.credentials_updated")
     except SQLAlchemyError:
-        return False, "Failed to update credentials. Please try again."
+        return False, t("auth.error.credentials_update_failed")

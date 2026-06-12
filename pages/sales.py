@@ -9,6 +9,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import selectinload
 
+from core.i18n import payment_status_label, t
 from database import SessionLocal
 from models import Customer, Debtor, Inventory, Product, Sale, SaleItem, StockMovement
 from pages.components import (
@@ -31,7 +32,7 @@ def _to_decimal(value: Any) -> Decimal:
     try:
         return Decimal(str(value).strip()).quantize(Decimal("0.01"))
     except (InvalidOperation, ValueError, AttributeError) as exc:
-        raise ValueError("Invalid monetary value.") from exc
+        raise ValueError(t("sales.error.invalid_monetary_value")) from exc
 
 
 def _clean_text(value: Any) -> str | None:
@@ -53,7 +54,7 @@ def _parse_date(value: str) -> datetime:
     try:
         return datetime.strptime(value, "%Y-%m-%d")
     except ValueError as exc:
-        raise ValueError("Sale Date must be a valid date.") from exc
+        raise ValueError(t("sales.error.invalid_sale_date")) from exc
 
 
 def load_customer_options() -> dict[str, str]:
@@ -62,9 +63,12 @@ def load_customer_options() -> dict[str, str]:
             select(Customer).order_by(func.lower(Customer.full_name).asc())
         ).all()
     return {
-        "": "Select customer",
-        **{str(item.id): f"{item.full_name} ({item.phone or '-'})" for item in customers},
-        NEW_CUSTOMER_OPTION: "➕ New Customer",
+        "": t("sales.option.select_customer"),
+        **{
+            str(item.id): f"{item.full_name} ({item.phone or t('common.placeholder.dash')})"
+            for item in customers
+        },
+        NEW_CUSTOMER_OPTION: t("sales.option.new_customer"),
     }
 
 
@@ -93,7 +97,7 @@ def load_product_options() -> dict[str, str]:
 def create_customer_record(data: dict[str, Any]) -> Customer:
     full_name = str(data.get("full_name", "")).strip()
     if not full_name:
-        raise ValueError("Customer name is required.")
+        raise ValueError(t("sales.error.customer_name_required"))
     with SessionLocal.begin() as session:
         customer = Customer(
             full_name=full_name,
@@ -166,7 +170,7 @@ def load_sale_rows(filters: dict[str, str]) -> list[dict[str, Any]]:
             "total_amount": f"{sale.total_amount:.2f}",
             "paid_amount": f"{sale.paid_amount:.2f}",
             "remaining_amount": f"{sale.remaining_amount:.2f}",
-            "payment_status": sale.payment_status or "",
+            "payment_status": payment_status_label(sale.payment_status or ""),
         }
         for sale in sales
     ]
@@ -177,29 +181,29 @@ def create_sale_record(data: dict[str, Any]) -> str:
     customer_id_raw = str(data.get("customer_id", "")).strip()
     sale_notes = _clean_text(data.get("notes"))
     if not customer_id_raw:
-        raise ValueError("Customer is required.")
+        raise ValueError(t("sales.error.customer_required"))
     if customer_id_raw == NEW_CUSTOMER_OPTION:
-        raise ValueError("Please create and select a customer.")
+        raise ValueError(t("sales.error.select_customer"))
 
     item_payloads = data.get("items", [])
     if not item_payloads:
-        raise ValueError("At least one sale item is required.")
+        raise ValueError(t("sales.error.at_least_one_item"))
 
     parsed_items: list[dict[str, Any]] = []
     total_amount = Decimal("0.00")
     for item in item_payloads:
         product_id_raw = str(item.get("product_id", "")).strip()
         if not product_id_raw:
-            raise ValueError("Each item must have a selected product.")
+            raise ValueError(t("sales.error.item_product_required"))
         try:
             quantity = int(item.get("quantity", 0))
         except (TypeError, ValueError) as exc:
-            raise ValueError("Quantity must be an integer.") from exc
+            raise ValueError(t("sales.error.quantity_integer")) from exc
         if quantity <= 0:
-            raise ValueError("Quantity must be greater than zero.")
+            raise ValueError(t("sales.error.quantity_positive"))
         unit_price = _to_decimal(item.get("unit_price", "0"))
         if unit_price < Decimal("0.00"):
-            raise ValueError("Unit Price cannot be negative.")
+            raise ValueError(t("sales.error.unit_price_negative"))
         line_total = (unit_price * Decimal(quantity)).quantize(Decimal("0.01"))
         total_amount += line_total
         parsed_items.append(
@@ -213,13 +217,13 @@ def create_sale_record(data: dict[str, Any]) -> str:
     total_amount = total_amount.quantize(Decimal("0.01"))
     paid_amount = _to_decimal(data.get("paid_amount", "0"))
     if paid_amount < Decimal("0.00"):
-        raise ValueError("Paid Amount cannot be negative.")
+        raise ValueError(t("sales.error.paid_amount_negative"))
     remaining_amount, payment_status = _payment_summary(total_amount, paid_amount)
 
     with SessionLocal.begin() as session:
         customer = session.get(Customer, int(customer_id_raw))
         if customer is None:
-            raise ValueError("Selected customer not found.")
+            raise ValueError(t("sales.error.customer_not_found"))
         customer_id = customer.id
 
         sale_number = generate_sale_number(session)
@@ -240,12 +244,12 @@ def create_sale_record(data: dict[str, Any]) -> str:
         for item in parsed_items:
             product = session.get(Product, int(item["product_id"]))
             if product is None:
-                raise ValueError("Selected product not found.")
+                raise ValueError(t("sales.error.product_not_found"))
 
             inventory = session.get(Inventory, product.id)
             current_qty = inventory.quantity if inventory is not None else 0
             if current_qty - int(item["quantity"]) < 0:
-                raise ValueError(f"Insufficient stock for product: {product.name}")
+                raise ValueError(t("sales.error.insufficient_stock", product_name=product.name))
 
             sale_item = SaleItem(
                 sale_id=sale.id,
@@ -318,27 +322,32 @@ def load_sale_detail(sale_id: int) -> dict[str, Any] | None:
 
 
 @ui.page("/sales")
-@with_master_layout("Sales")
+@with_master_layout(t("sales.title"))
 def sales_page() -> None:
     filters = {"search": "", "customer_id": "", "payment_status": ""}
-    payment_status_options = {"": "All", "Paid": "Paid", "Partially Paid": "Partially Paid", "Unpaid": "Unpaid"}
+    payment_status_options = {
+        "": t("common.filter.all"),
+        "Paid": payment_status_label("Paid"),
+        "Partially Paid": payment_status_label("Partially Paid"),
+        "Unpaid": payment_status_label("Unpaid"),
+    }
     customer_options = load_customer_options()
     customer_map = load_customer_map()
     product_options = load_product_options()
     product_map = load_product_map()
 
-    page_header("Sales", "Create sales and track customer payments.")
+    page_header(t("sales.title"), t("sales.description"))
 
     sale_columns = [
-        {"name": "sale_number", "label": "Sale Number", "field": "sale_number", "align": "left"},
-        {"name": "sale_date", "label": "Sale Date", "field": "sale_date", "align": "left"},
-        {"name": "customer", "label": "Customer", "field": "customer", "align": "left"},
-        {"name": "items_count", "label": "Items Count", "field": "items_count", "align": "right"},
-        {"name": "total_amount", "label": "Total Amount", "field": "total_amount", "align": "right"},
-        {"name": "paid_amount", "label": "Paid Amount", "field": "paid_amount", "align": "right"},
-        {"name": "remaining_amount", "label": "Remaining Amount", "field": "remaining_amount", "align": "right"},
-        {"name": "payment_status", "label": "Payment Status", "field": "payment_status", "align": "center"},
-        {"name": "actions", "label": "Actions", "field": "actions", "align": "center"},
+        {"name": "sale_number", "label": t("sales.table.sale_number"), "field": "sale_number", "align": "left"},
+        {"name": "sale_date", "label": t("sales.field.sale_date"), "field": "sale_date", "align": "left"},
+        {"name": "customer", "label": t("sales.field.customer"), "field": "customer", "align": "left"},
+        {"name": "items_count", "label": t("sales.table.items_count"), "field": "items_count", "align": "right"},
+        {"name": "total_amount", "label": t("purchases.field.total_amount"), "field": "total_amount", "align": "right"},
+        {"name": "paid_amount", "label": t("purchases.field.paid_amount"), "field": "paid_amount", "align": "right"},
+        {"name": "remaining_amount", "label": t("purchases.field.remaining_amount"), "field": "remaining_amount", "align": "right"},
+        {"name": "payment_status", "label": t("sales.filter.payment_status"), "field": "payment_status", "align": "center"},
+        {"name": "actions", "label": t("common.table.actions"), "field": "actions", "align": "center"},
     ]
     sales_table: Any = None
     search_input: Any = None
@@ -358,50 +367,50 @@ def sales_page() -> None:
             sales_table.rows = load_sale_rows(filters)
             sales_table.update()
         except SQLAlchemyError:
-            ui.notify("Failed to load sales.", color="negative")
+            ui.notify(t("sales.notify.load_failed"), color="negative")
 
     with ui.dialog() as details_dialog, ui.card().classes("w-[900px] max-w-full"):
-        details_title = ui.label("Sale Details").classes("text-h6")
+        details_title = ui.label(t("sales.dialog.details")).classes("text-h6")
         info_line = ui.label("")
         totals_line = ui.label("")
         notes_line = ui.label("")
         detail_columns = [
-            {"name": "product_name", "label": "Product", "field": "product_name", "align": "left"},
-            {"name": "quantity", "label": "Quantity", "field": "quantity", "align": "right"},
-            {"name": "unit_price", "label": "Unit Price", "field": "unit_price", "align": "right"},
-            {"name": "total_price", "label": "Total", "field": "total_price", "align": "right"},
+            {"name": "product_name", "label": t("sales.field.product"), "field": "product_name", "align": "left"},
+            {"name": "quantity", "label": t("common.table.quantity"), "field": "quantity", "align": "right"},
+            {"name": "unit_price", "label": t("sales.field.unit_price"), "field": "unit_price", "align": "right"},
+            {"name": "total_price", "label": t("common.table.total"), "field": "total_price", "align": "right"},
         ]
         details_items_table = ui.table(columns=detail_columns, rows=[], row_key="product_name", pagination=10).classes("w-full")
         with ui.row().classes("justify-end w-full q-mt-sm"):
-            ui.button("Close", on_click=details_dialog.close, color="grey-6")
+            ui.button(t("common.button.close"), on_click=details_dialog.close, color="grey-6")
 
     with ui.dialog() as add_dialog, ui.card().classes("w-[1100px] max-w-full"):
-        ui.label("Add Sale").classes("text-h6")
+        ui.label(t("sales.dialog.add_sale")).classes("text-h6")
 
         with ui.row().classes("w-full gap-2"):
             add_customer_select = ui.select(
                 options=customer_options,
-                label="Customer",
+                label=t("sales.field.customer"),
                 value="",
                 with_input=True,
                 on_change=lambda e: on_customer_change(getattr(e, "value", None)),
             ).classes("col")
-            add_sale_date_input = ui.input("Sale Date", value=datetime.now().strftime("%Y-%m-%d")).props("type=date").classes("col")
-        sale_notes_input = ui.textarea("Sale Notes").classes("w-full")
+            add_sale_date_input = ui.input(t("sales.field.sale_date"), value=datetime.now().strftime("%Y-%m-%d")).props("type=date").classes("col")
+        sale_notes_input = ui.textarea(t("sales.field.sale_notes")).classes("w-full")
 
         ui.separator()
-        ui.label("Items").classes("text-subtitle1")
+        ui.label(t("purchases.section.items")).classes("text-subtitle1")
         items_container = ui.column().classes("w-full gap-2")
         item_rows: list[dict[str, Any]] = []
 
         ui.separator()
-        ui.label("Payment").classes("text-subtitle1")
+        ui.label(t("purchases.section.payment")).classes("text-subtitle1")
         with ui.row().classes("w-full gap-2"):
-            total_amount_display = ui.input("Total Amount", value="0.00").props("readonly").classes("col")
-            paid_amount_input = ui.input("Paid Amount", value="0.00").classes("col")
+            total_amount_display = ui.input(t("purchases.field.total_amount"), value="0.00").props("readonly").classes("col")
+            paid_amount_input = ui.input(t("purchases.field.paid_amount"), value="0.00").classes("col")
         with ui.row().classes("w-full gap-2"):
-            remaining_amount_display = ui.input("Remaining Amount", value="0.00").props("readonly").classes("col")
-            payment_status_display = ui.input("Payment Status", value="Unpaid").props("readonly").classes("col")
+            remaining_amount_display = ui.input(t("purchases.field.remaining_amount"), value="0.00").props("readonly").classes("col")
+            payment_status_display = ui.input(t("purchases.field.payment_status"), value=payment_status_label("Unpaid")).props("readonly").classes("col")
 
         def recalc_totals() -> None:
             total = Decimal("0.00")
@@ -426,7 +435,7 @@ def sales_page() -> None:
             remaining, status = _payment_summary(total, paid)
             total_amount_display.value = f"{total:.2f}"
             remaining_amount_display.value = f"{remaining:.2f}"
-            payment_status_display.value = status
+            payment_status_display.value = payment_status_label(status)
             total_amount_display.update()
             remaining_amount_display.update()
             payment_status_display.update()
@@ -437,17 +446,17 @@ def sales_page() -> None:
                 row_box = ui.row().classes("w-full items-end gap-2")
                 with row_box:
                     product_select = ui.select(
-                        options={"": "Select product", **product_options},
-                        label="Product",
+                        options={"": t("sales.option.select_product"), **product_options},
+                        label=t("sales.field.product"),
                         value=str(defaults.get("product_id", "")),
                         with_input=True,
                     ).classes("w-[280px]")
-                    qty_input = ui.number("Quantity", value=defaults.get("quantity", 1), min=1, precision=0).classes("w-[120px]")
-                    size_input = ui.input("Size", value=str(defaults.get("size", ""))).props("readonly").classes("w-[120px]")
-                    pressure_input = ui.input("Pressure", value=str(defaults.get("pressure", ""))).props("readonly").classes("w-[120px]")
-                    unit_price_input = ui.input("Unit Price", value=str(defaults.get("unit_price", "0.00"))).classes("w-[170px]")
-                    total_input = ui.input("Total", value="0.00").props("readonly").classes("w-[150px]")
-                    remove_btn = ui.button("Remove Item", color="negative")
+                    qty_input = ui.number(t("common.table.quantity"), value=defaults.get("quantity", 1), min=1, precision=0).classes("w-[120px]")
+                    size_input = ui.input(t("products.field.size"), value=str(defaults.get("size", ""))).props("readonly").classes("w-[120px]")
+                    pressure_input = ui.input(t("products.field.pressure"), value=str(defaults.get("pressure", ""))).props("readonly").classes("w-[120px]")
+                    unit_price_input = ui.input(t("sales.field.unit_price"), value=str(defaults.get("unit_price", "0.00"))).classes("w-[170px]")
+                    total_input = ui.input(t("common.table.total"), value="0.00").props("readonly").classes("w-[150px]")
+                    remove_btn = ui.button(t("common.button.remove_item"), color="negative")
             row_data = {
                 "container": row_box,
                 "product": product_select,
@@ -479,7 +488,7 @@ def sales_page() -> None:
 
             def remove_row() -> None:
                 if len(item_rows) <= 1:
-                    ui.notify("At least one item is required.", color="warning")
+                    ui.notify(t("sales.notify.at_least_one_item"), color="warning")
                     return
                 item_rows.remove(row_data)
                 row_box.delete()
@@ -496,13 +505,13 @@ def sales_page() -> None:
         paid_amount_input.on("change", lambda _: recalc_totals())
 
         with ui.dialog() as new_customer_dialog, ui.card().classes("w-[520px] max-w-full"):
-            ui.label("Create New Customer").classes("text-h6")
-            new_customer_name = ui.input("Customer Name *").classes("w-full")
-            new_customer_phone = ui.input("Phone").classes("w-full")
-            new_customer_address = ui.input("Address").classes("w-full")
-            new_customer_notes = ui.textarea("Notes").classes("w-full")
+            ui.label(t("sales.dialog.create_customer")).classes("text-h6")
+            new_customer_name = ui.input(t("sales.field.customer_name_required")).classes("w-full")
+            new_customer_phone = ui.input(t("suppliers.field.phone")).classes("w-full")
+            new_customer_address = ui.input(t("suppliers.field.address")).classes("w-full")
+            new_customer_notes = ui.textarea(t("common.table.notes")).classes("w-full")
             with ui.row().classes("justify-end w-full q-mt-sm"):
-                ui.button("Cancel", on_click=new_customer_dialog.close, color="grey-6")
+                ui.button(t("common.button.cancel"), on_click=new_customer_dialog.close, color="grey-6")
 
                 def submit_new_customer() -> None:
                     nonlocal customer_options, customer_map
@@ -520,14 +529,14 @@ def sales_page() -> None:
                         add_customer_select.options = customer_options
                         add_customer_select.value = str(created.id)
                         add_customer_select.update()
-                        ui.notify("Customer created successfully.", color="positive")
+                        ui.notify(t("sales.notify.customer_created"), color="positive")
                         new_customer_dialog.close()
                     except ValueError as exc:
                         ui.notify(str(exc), color="warning")
                     except SQLAlchemyError:
-                        ui.notify("Failed to create customer.", color="negative")
+                        ui.notify(t("sales.notify.customer_create_failed"), color="negative")
 
-                ui.button("Create", on_click=submit_new_customer, color="primary")
+                ui.button(t("common.button.create"), on_click=submit_new_customer, color="primary")
 
         def _normalize_customer_selection(raw: Any) -> str:
             if raw is None:
@@ -543,7 +552,7 @@ def sales_page() -> None:
 
         def on_customer_change(raw: Any) -> None:
             selected = _normalize_customer_selection(raw)
-            if selected in {NEW_CUSTOMER_OPTION, "➕ New Customer"}:
+            if selected in {NEW_CUSTOMER_OPTION, t("sales.option.new_customer")}:
                 add_customer_select.value = ""
                 add_customer_select.update()
                 new_customer_name.value = ""
@@ -563,9 +572,9 @@ def sales_page() -> None:
         )
 
         with ui.row().classes("w-full justify-between q-mt-sm"):
-            ui.button("Add Item", icon="add", on_click=lambda: add_item_row()).props("flat")
+            ui.button(t("common.button.add_item"), icon="add", on_click=lambda: add_item_row()).props("flat")
             with ui.row().classes("gap-2"):
-                ui.button("Cancel", on_click=add_dialog.close, color="grey-6")
+                ui.button(t("common.button.cancel"), on_click=add_dialog.close, color="grey-6")
 
                 def submit_sale() -> None:
                     try:
@@ -589,13 +598,13 @@ def sales_page() -> None:
                         )
                         add_dialog.close()
                         refresh_table()
-                        ui.notify(f"Sale {sale_number} created successfully.", color="positive")
+                        ui.notify(t("sales.notify.created", sale_number=sale_number), color="positive")
                     except ValueError as exc:
                         ui.notify(str(exc), color="warning")
                     except SQLAlchemyError:
-                        ui.notify("Failed to create sale.", color="negative")
+                        ui.notify(t("sales.notify.create_failed"), color="negative")
 
-                ui.button("Save Sale", on_click=submit_sale, color="primary")
+                ui.button(t("common.button.save_sale"), on_click=submit_sale, color="primary")
 
         def open_add_dialog() -> None:
             nonlocal customer_options, customer_map, product_options, product_map
@@ -611,7 +620,7 @@ def sales_page() -> None:
             paid_amount_input.value = "0.00"
             total_amount_display.value = "0.00"
             remaining_amount_display.value = "0.00"
-            payment_status_display.value = "Unpaid"
+            payment_status_display.value = payment_status_label("Unpaid")
             for row in list(item_rows):
                 row["container"].delete()
                 item_rows.remove(row)
@@ -621,18 +630,25 @@ def sales_page() -> None:
     def open_details(row: dict[str, Any]) -> None:
         detail = load_sale_detail(int(row["id"]))
         if detail is None:
-            ui.notify("Sale not found.", color="warning")
+            ui.notify(t("sales.notify.not_found"), color="warning")
             return
-        details_title.text = f'Sale Details: {detail["sale_number"]}'
-        info_line.text = (
-            f'Customer: {detail["customer"]} | Date: {detail["sale_date"]} | '
-            f'Status: {detail["payment_status"]}'
+        details_title.text = t("sales.dialog.details_number", sale_number=detail["sale_number"])
+        info_line.text = t(
+            "sales.details.info",
+            customer=detail["customer"],
+            date=detail["sale_date"],
+            status=payment_status_label(detail["payment_status"]),
         )
-        totals_line.text = (
-            f'Total: {detail["total_amount"]} | Paid: {detail["paid_amount"]} | '
-            f'Remaining: {detail["remaining_amount"]}'
+        totals_line.text = t(
+            "sales.details.totals",
+            total=detail["total_amount"],
+            paid=detail["paid_amount"],
+            remaining=detail["remaining_amount"],
         )
-        notes_line.text = f'Notes: {detail["notes"] or "-"}'
+        notes_line.text = t(
+            "sales.details.notes",
+            notes=detail["notes"] or t("common.placeholder.dash"),
+        )
         details_items_table.rows = detail["items"]
         details_items_table.update()
         details_dialog.open()
@@ -640,25 +656,25 @@ def sales_page() -> None:
     with search_panel():
         with ui.row().classes("w-full items-end no-wrap gap-3"):
             search_input = ui.input(
-                label="Search Sale / Customer",
-                placeholder="Search by sale number or customer",
+                label=t("sales.search.label"),
+                placeholder=t("sales.search.placeholder"),
                 on_change=lambda e: filters.__setitem__("search", e.value or ""),
             ).classes("flex-1 min-w-0")
-            ui.button("Search", on_click=refresh_table, icon="search")
-            ui.button("Add Sale", on_click=lambda: open_add_dialog(), icon="add", color="primary")
+            ui.button(t("common.button.search"), on_click=refresh_table, icon="search")
+            ui.button(t("sales.button.add_sale"), on_click=lambda: open_add_dialog(), icon="add", color="primary")
 
     with ui.row().classes("w-full items-start gap-4 no-wrap"):
         with filter_sidebar():
             customer_filter_select = ui.select(
                 options=customer_options,
-                label="Customer",
+                label=t("sales.field.customer"),
                 value="",
                 with_input=True,
                 on_change=lambda e: filters.__setitem__("customer_id", e.value or ""),
             ).classes("w-full")
             payment_status_select = ui.select(
                 options=payment_status_options,
-                label="Payment Status",
+                label=t("sales.filter.payment_status"),
                 value="",
                 with_input=True,
                 on_change=lambda e: filters.__setitem__("payment_status", e.value or ""),
@@ -676,8 +692,8 @@ def sales_page() -> None:
                 payment_status_select.update()
                 refresh_table()
 
-            ui.button("Apply Filters", on_click=refresh_table, icon="filter_alt").classes("w-full")
-            ui.button("Reset Filters", on_click=reset_filters, icon="refresh").classes("w-full q-mt-sm")
+            ui.button(t("common.button.apply_filters"), on_click=refresh_table, icon="filter_alt").classes("w-full")
+            ui.button(t("common.button.reset_filters"), on_click=reset_filters, icon="refresh").classes("w-full q-mt-sm")
 
         with data_table_card().classes("flex-1 min-w-0"):
             with ui.element("div").classes("w-full overflow-auto").style("max-height: calc(100vh - 300px);"):
@@ -689,7 +705,7 @@ def sales_page() -> None:
                 ).classes("w-full")
 
     style_status_column(sales_table, "payment_status")
-    add_table_empty_state(sales_table, "No sales recorded yet.", icon="🧾")
+    add_table_empty_state(sales_table, t("sales.empty.no_sales"), icon="🧾")
     sales_table.add_slot(
         "body-cell-actions",
         """

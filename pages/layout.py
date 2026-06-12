@@ -9,9 +9,10 @@ from fastapi.responses import RedirectResponse
 from nicegui import app, ui
 
 from services import auth_service
+from core.i18n import t
 
 
-APP_NAME = "FlowCore"
+APP_NAME = t("app.name")
 
 _IMAGES_DIR = Path(__file__).resolve().parent.parent / "images"
 app.add_static_files("/images", str(_IMAGES_DIR))
@@ -19,14 +20,14 @@ app.add_static_files("/images", str(_IMAGES_DIR))
 LOGO_URL = "/images/logo_without_company_name.png"
 
 NAV_ITEMS = [
-    {"label": "Dashboard", "path": "/dashboard", "icon": "space_dashboard"},
-    {"label": "Inventory", "path": "/inventory", "icon": "inventory_2"},
-    {"label": "Products", "path": "/products", "icon": "category"},
-    {"label": "Suppliers", "path": "/suppliers", "icon": "local_shipping"},
-    {"label": "Purchases", "path": "/purchases", "icon": "shopping_cart"},
-    {"label": "Sales", "path": "/sales", "icon": "point_of_sale"},
-    {"label": "Debtors", "path": "/debtors", "icon": "payments"},
-    {"label": "Settings", "path": "/settings", "icon": "settings"},
+    {"label_key": "nav.dashboard", "path": "/dashboard", "icon": "space_dashboard"},
+    {"label_key": "nav.inventory", "path": "/inventory", "icon": "inventory_2"},
+    {"label_key": "nav.products", "path": "/products", "icon": "category"},
+    {"label_key": "nav.suppliers", "path": "/suppliers", "icon": "local_shipping"},
+    {"label_key": "nav.purchases", "path": "/purchases", "icon": "shopping_cart"},
+    {"label_key": "nav.sales", "path": "/sales", "icon": "point_of_sale"},
+    {"label_key": "nav.debtors", "path": "/debtors", "icon": "payments"},
+    {"label_key": "nav.settings", "path": "/settings", "icon": "settings"},
 ]
 
 MOBILE_BREAKPOINT = 768
@@ -389,9 +390,10 @@ def _build_sidebar(current_path: str, user: dict[str, Any]) -> None:
                     )
                     with nav_item:
                         ui.icon(item["icon"])
-                        ui.label(item["label"]).classes("fc-nav-label")
-                        ui.tooltip(item["label"]).props("anchor='center right' self='center left'")
-            full_name = str(user.get("full_name") or "User")
+                        nav_label = t(item["label_key"])
+                        ui.label(nav_label).classes("fc-nav-label")
+                        ui.tooltip(nav_label).props("anchor='center right' self='center left'")
+            full_name = str(user.get("full_name") or t("app.user_fallback"))
             username = str(user.get("username") or "")
             initial = (full_name.strip()[:1] or "U").upper()
             with ui.element("div").classes("fc-profile-wrap"):
@@ -404,7 +406,7 @@ def _build_sidebar(current_path: str, user: dict[str, Any]) -> None:
                     with ui.button(
                         on_click=lambda: ui.navigate.to("/logout")
                     ).props("flat round dense icon=logout").classes("fc-profile-logout"):
-                        ui.tooltip("Logout")
+                        ui.tooltip(t("nav.logout"))
 
     initialized = {"done": False}
 
@@ -497,7 +499,7 @@ def with_master_layout(page_title: str) -> Callable[[Callable[..., Any]], Callab
 
             current_path = str(ui.context.client.request.url.path)
 
-            ui.page_title(f"{page_title} · {APP_NAME}")
+            ui.page_title(t("app.page_title", page_title=page_title, app_name=APP_NAME))
             _apply_theme()
             _install_session_watchdog()
 

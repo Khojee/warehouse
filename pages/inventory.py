@@ -7,6 +7,7 @@ from sqlalchemy import func, or_, select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import selectinload
 
+from core.i18n import movement_type_label, stock_status_label, t
 from database import SessionLocal, engine
 from models import Inventory, Product, ProductAlias, ProductCategory, StockMovement
 from pages.components import (
@@ -20,6 +21,12 @@ from pages.components import (
     style_status_column,
 )
 from pages.layout import with_master_layout
+
+_STOCK_STATUS_ENGLISH: dict[str, str] = {
+    "in_stock": "In Stock",
+    "low_stock": "Low Stock",
+    "out_of_stock": "Out Of Stock",
+}
 
 
 def ensure_inventory_trigger() -> None:
@@ -51,12 +58,17 @@ def ensure_inventory_rows() -> None:
         )
 
 
-def get_stock_status(quantity: int, min_stock: int) -> tuple[str, str]:
+def get_stock_status(quantity: int, min_stock: int) -> tuple[str, str, str]:
     if quantity <= 0:
-        return "Out Of Stock", "negative"
-    if quantity <= max(min_stock, 0):
-        return "Low Stock", "warning"
-    return "In Stock", "positive"
+        status_code = "out_of_stock"
+        color = "negative"
+    elif quantity <= max(min_stock, 0):
+        status_code = "low_stock"
+        color = "warning"
+    else:
+        status_code = "in_stock"
+        color = "positive"
+    return status_code, stock_status_label(_STOCK_STATUS_ENGLISH[status_code]), color
 
 
 def load_filter_options() -> dict[str, dict[str, str]]:
@@ -79,15 +91,16 @@ def load_filter_options() -> dict[str, dict[str, str]]:
             .order_by(Product.pressure.asc())
         ).all()
 
+    all_label = t("common.filter.all")
     return {
-        "categories": {"": "All", **{str(item.id): item.name for item in categories}},
-        "sizes": {"": "All", **{value: value for value in sizes if value}},
-        "pressures": {"": "All", **{value: value for value in pressures if value}},
+        "categories": {"": all_label, **{str(item.id): item.name for item in categories}},
+        "sizes": {"": all_label, **{value: value for value in sizes if value}},
+        "pressures": {"": all_label, **{value: value for value in pressures if value}},
         "stock_statuses": {
-            "": "All",
-            "in_stock": "In Stock",
-            "low_stock": "Low Stock",
-            "out_of_stock": "Out Of Stock",
+            "": all_label,
+            "in_stock": stock_status_label("In Stock"),
+            "low_stock": stock_status_label("Low Stock"),
+            "out_of_stock": stock_status_label("Out Of Stock"),
         },
     }
 
@@ -118,12 +131,14 @@ def load_inventory_rows(filters: dict[str, str]) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         for product in products:
             quantity = product.inventory.quantity if product.inventory is not None else 0
-            status, status_color = get_stock_status(quantity=quantity, min_stock=product.min_stock)
-            if filters["stock_status"] == "in_stock" and status != "In Stock":
+            status_code, display_label, status_color = get_stock_status(
+                quantity=quantity, min_stock=product.min_stock
+            )
+            if filters["stock_status"] == "in_stock" and status_code != "in_stock":
                 continue
-            if filters["stock_status"] == "low_stock" and status != "Low Stock":
+            if filters["stock_status"] == "low_stock" and status_code != "low_stock":
                 continue
-            if filters["stock_status"] == "out_of_stock" and status != "Out Of Stock":
+            if filters["stock_status"] == "out_of_stock" and status_code != "out_of_stock":
                 continue
 
             rows.append(
@@ -141,7 +156,8 @@ def load_inventory_rows(filters: dict[str, str]) -> list[dict[str, Any]]:
                     "unit": product.unit,
                     "quantity": quantity,
                     "min_stock": product.min_stock,
-                    "status": status,
+                    "status": display_label,
+                    "status_code": status_code,
                     "status_color": status_color,
                 }
             )
@@ -162,7 +178,7 @@ def load_stock_movement_rows(product_id: int) -> list[dict[str, Any]]:
             "date": movement.created_at.strftime("%Y-%m-%d %H:%M:%S")
             if movement.created_at
             else "",
-            "movement_type": movement.movement_type,
+            "movement_type": movement_type_label(movement.movement_type),
             "quantity": movement.quantity,
             "reference_type": movement.reference_type or "",
             "notes": movement.notes or "",
@@ -174,8 +190,8 @@ def load_stock_movement_rows(product_id: int) -> list[dict[str, Any]]:
 def get_dashboard_stats(rows: list[dict[str, Any]]) -> dict[str, int]:
     total_products = len(rows)
     total_quantity = sum(int(row["quantity"]) for row in rows)
-    low_stock_count = sum(1 for row in rows if row["status"] == "Low Stock")
-    out_of_stock_count = sum(1 for row in rows if row["status"] == "Out Of Stock")
+    low_stock_count = sum(1 for row in rows if row["status_code"] == "low_stock")
+    out_of_stock_count = sum(1 for row in rows if row["status_code"] == "out_of_stock")
     return {
         "total_products": total_products,
         "total_quantity": total_quantity,
@@ -192,14 +208,14 @@ def adjust_stock(
     notes: str | None = None,
 ) -> None:
     if quantity <= 0:
-        raise ValueError("Quantity must be greater than zero.")
+        raise ValueError(t("inventory.error.quantity_must_be_positive"))
     if movement_type not in {"IN", "OUT"}:
-        raise ValueError("Invalid movement type.")
+        raise ValueError(t("inventory.error.invalid_movement_type"))
 
     with SessionLocal.begin() as session:
         product = session.get(Product, product_id)
         if product is None:
-            raise ValueError("Product not found.")
+            raise ValueError(t("inventory.error.product_not_found"))
 
         inventory = session.get(Inventory, product_id)
         if inventory is None:
@@ -208,7 +224,7 @@ def adjust_stock(
             session.flush()
 
         if movement_type == "OUT" and inventory.quantity - quantity < 0:
-            raise ValueError("Quantity cannot become negative.")
+            raise ValueError(t("inventory.error.quantity_cannot_be_negative"))
 
         if movement_type == "IN":
             inventory.quantity += quantity
@@ -227,7 +243,7 @@ def adjust_stock(
 
 
 @ui.page("/inventory")
-@with_master_layout("Inventory")
+@with_master_layout(t("inventory.title"))
 def inventory_page() -> None:
     ensure_inventory_trigger()
     ensure_inventory_rows()
@@ -240,7 +256,7 @@ def inventory_page() -> None:
         "stock_status": "",
     }
 
-    page_header("Inventory", "Track and adjust warehouse stock levels.")
+    page_header(t("inventory.title"), t("inventory.description"))
 
     stat_total_products: Any = None
     stat_total_quantity: Any = None
@@ -248,16 +264,66 @@ def inventory_page() -> None:
     stat_out_of_stock: Any = None
 
     table_columns = [
-        {"name": "product_name", "label": "Product Name", "field": "product_name", "align": "left"},
-        {"name": "quantity", "label": "Quantity", "field": "quantity", "align": "right"},
-        {"name": "status", "label": "Status", "field": "status", "align": "center"},
-        {"name": "category", "label": "Category", "field": "category", "align": "left"},
-        {"name": "size", "label": "Size", "field": "size", "align": "left"},
-        {"name": "pressure", "label": "Pressure", "field": "pressure", "align": "left"},
-        {"name": "material", "label": "Material", "field": "material", "align": "left"},
-        {"name": "unit", "label": "Unit", "field": "unit", "align": "left"},
-        {"name": "min_stock", "label": "Minimum Stock", "field": "min_stock", "align": "right"},
-        {"name": "actions", "label": "Actions", "field": "actions", "align": "center"},
+        {
+            "name": "product_name",
+            "label": t("inventory.table.product_name"),
+            "field": "product_name",
+            "align": "left",
+        },
+        {
+            "name": "quantity",
+            "label": t("common.table.quantity"),
+            "field": "quantity",
+            "align": "right",
+        },
+        {
+            "name": "status",
+            "label": t("common.table.status"),
+            "field": "status",
+            "align": "center",
+        },
+        {
+            "name": "category",
+            "label": t("inventory.table.category"),
+            "field": "category",
+            "align": "left",
+        },
+        {
+            "name": "size",
+            "label": t("inventory.filter.size"),
+            "field": "size",
+            "align": "left",
+        },
+        {
+            "name": "pressure",
+            "label": t("inventory.filter.pressure"),
+            "field": "pressure",
+            "align": "left",
+        },
+        {
+            "name": "material",
+            "label": t("inventory.table.material"),
+            "field": "material",
+            "align": "left",
+        },
+        {
+            "name": "unit",
+            "label": t("inventory.table.unit"),
+            "field": "unit",
+            "align": "left",
+        },
+        {
+            "name": "min_stock",
+            "label": t("inventory.table.minimum_stock"),
+            "field": "min_stock",
+            "align": "right",
+        },
+        {
+            "name": "actions",
+            "label": t("common.table.actions"),
+            "field": "actions",
+            "align": "center",
+        },
     ]
     inventory_table: Any = None
 
@@ -308,19 +374,21 @@ def inventory_page() -> None:
             stat_low_stock.text = str(stats["low_stock_count"])
             stat_out_of_stock.text = str(stats["out_of_stock_count"])
         except SQLAlchemyError:
-            ui.notify("Failed to load inventory.", color="negative")
+            ui.notify(t("inventory.notify.load_failed"), color="negative")
 
     add_stock_target: dict[str, Any] | None = None
     remove_stock_target: dict[str, Any] | None = None
 
     with ui.dialog() as add_stock_dialog, ui.card().classes("w-[450px] max-w-full"):
-        ui.label("Add Stock").classes("text-h6")
+        ui.label(t("inventory.dialog.add_stock")).classes("text-h6")
         add_product_name_label = ui.label("").classes("text-subtitle1")
         add_current_qty_label = ui.label("").classes("text-caption text-grey-8")
-        add_quantity_input = ui.number("Quantity To Add", value=1, min=1, precision=0).classes("w-full")
-        add_notes_input = ui.textarea("Reason").classes("w-full")
+        add_quantity_input = ui.number(
+            t("inventory.dialog.quantity_to_add"), value=1, min=1, precision=0
+        ).classes("w-full")
+        add_notes_input = ui.textarea(t("inventory.dialog.reason")).classes("w-full")
         with ui.row().classes("justify-end w-full q-mt-sm"):
-            ui.button("Cancel", on_click=add_stock_dialog.close, color="grey-6")
+            ui.button(t("common.button.cancel"), on_click=add_stock_dialog.close, color="grey-6")
 
             def submit_add_stock() -> None:
                 nonlocal add_stock_target
@@ -333,24 +401,26 @@ def inventory_page() -> None:
                         movement_type="IN",
                         notes=str(add_notes_input.value or ""),
                     )
-                    ui.notify("Stock added successfully.", color="positive")
+                    ui.notify(t("inventory.notify.stock_added"), color="positive")
                     add_stock_dialog.close()
                     refresh_page()
                 except ValueError as exc:
                     ui.notify(str(exc), color="warning")
                 except SQLAlchemyError:
-                    ui.notify("Failed to add stock.", color="negative")
+                    ui.notify(t("inventory.notify.add_stock_failed"), color="negative")
 
-            ui.button("Save", on_click=submit_add_stock, color="primary")
+            ui.button(t("common.button.save"), on_click=submit_add_stock, color="primary")
 
     with ui.dialog() as remove_stock_dialog, ui.card().classes("w-[450px] max-w-full"):
-        ui.label("Remove Stock").classes("text-h6")
+        ui.label(t("inventory.dialog.remove_stock")).classes("text-h6")
         remove_product_name_label = ui.label("").classes("text-subtitle1")
         remove_current_qty_label = ui.label("").classes("text-caption text-grey-8")
-        remove_quantity_input = ui.number("Quantity To Remove", value=1, min=1, precision=0).classes("w-full")
-        remove_notes_input = ui.textarea("Reason").classes("w-full")
+        remove_quantity_input = ui.number(
+            t("inventory.dialog.quantity_to_remove"), value=1, min=1, precision=0
+        ).classes("w-full")
+        remove_notes_input = ui.textarea(t("inventory.dialog.reason")).classes("w-full")
         with ui.row().classes("justify-end w-full q-mt-sm"):
-            ui.button("Cancel", on_click=remove_stock_dialog.close, color="grey-6")
+            ui.button(t("common.button.cancel"), on_click=remove_stock_dialog.close, color="grey-6")
 
             def submit_remove_stock() -> None:
                 nonlocal remove_stock_target
@@ -363,51 +433,51 @@ def inventory_page() -> None:
                         movement_type="OUT",
                         notes=str(remove_notes_input.value or ""),
                     )
-                    ui.notify("Stock removed successfully.", color="positive")
+                    ui.notify(t("inventory.notify.stock_removed"), color="positive")
                     remove_stock_dialog.close()
                     refresh_page()
                 except ValueError as exc:
                     ui.notify(str(exc), color="warning")
                 except SQLAlchemyError:
-                    ui.notify("Failed to remove stock.", color="negative")
+                    ui.notify(t("inventory.notify.remove_stock_failed"), color="negative")
 
-            ui.button("Save", on_click=submit_remove_stock, color="primary")
+            ui.button(t("common.button.save"), on_click=submit_remove_stock, color="primary")
 
     with search_panel():
         with ui.row().classes("w-full items-end no-wrap gap-3"):
             search_input = ui.input(
-                label="Search Product / Alias",
-                placeholder="Search by product name or alias",
+                label=t("inventory.search.label"),
+                placeholder=t("inventory.search.placeholder"),
                 on_change=lambda e: filters.__setitem__("search", e.value or ""),
             ).classes("flex-1 min-w-0")
-            ui.button("Search", on_click=refresh_page, icon="search")
+            ui.button(t("common.button.search"), on_click=refresh_page, icon="search")
 
     with ui.row().classes("w-full items-start gap-4 no-wrap"):
         with filter_sidebar():
                 category_select = ui.select(
                     options=category_options,
-                    label="Category",
+                    label=t("inventory.filter.category"),
                     value="",
                     on_change=lambda e: filters.__setitem__("category_id", e.value or ""),
                     with_input=True,
                 ).classes("w-full q-mb-sm")
                 size_select = ui.select(
                     options=size_options,
-                    label="Size",
+                    label=t("inventory.filter.size"),
                     value="",
                     on_change=lambda e: filters.__setitem__("size", e.value or ""),
                     with_input=True,
                 ).classes("w-full q-mb-sm")
                 pressure_select = ui.select(
                     options=pressure_options,
-                    label="Pressure",
+                    label=t("inventory.filter.pressure"),
                     value="",
                     on_change=lambda e: filters.__setitem__("pressure", e.value or ""),
                     with_input=True,
                 ).classes("w-full q-mb-sm")
                 status_select = ui.select(
                     options=stock_status_options,
-                    label="Stock Status",
+                    label=t("inventory.filter.stock_status"),
                     value="",
                     on_change=lambda e: filters.__setitem__("stock_status", e.value or ""),
                 ).classes("w-full q-mb-md")
@@ -430,8 +500,12 @@ def inventory_page() -> None:
                     status_select.update()
                     refresh_page()
 
-                ui.button("Apply Filters", on_click=refresh_page, icon="filter_alt").classes("w-full")
-                ui.button("Reset Filters", on_click=reset_filters, icon="refresh").classes("w-full q-mt-sm")
+                ui.button(
+                    t("common.button.apply_filters"), on_click=refresh_page, icon="filter_alt"
+                ).classes("w-full")
+                ui.button(
+                    t("common.button.reset_filters"), on_click=reset_filters, icon="refresh"
+                ).classes("w-full q-mt-sm")
 
         with data_table_card().classes("flex-1 min-w-0"):
             with ui.element("div").classes("w-full overflow-auto").style("max-height: calc(100vh - 360px);"):
@@ -443,13 +517,15 @@ def inventory_page() -> None:
                 ).classes("w-full")
 
     with statistic_grid().classes("q-mt-md"):
-        stat_total_products = statistic_card("Total Products", icon="category")
-        stat_total_quantity = statistic_card("Total Quantity", icon="inventory_2")
-        stat_low_stock = statistic_card("Low Stock Count", icon="report_problem")
-        stat_out_of_stock = statistic_card("Out Of Stock Count", icon="remove_shopping_cart")
+        stat_total_products = statistic_card(t("inventory.stat.total_products"), icon="category")
+        stat_total_quantity = statistic_card(t("inventory.stat.total_quantity"), icon="inventory_2")
+        stat_low_stock = statistic_card(t("inventory.stat.low_stock_count"), icon="report_problem")
+        stat_out_of_stock = statistic_card(
+            t("inventory.stat.out_of_stock_count"), icon="remove_shopping_cart"
+        )
 
     style_status_column(inventory_table, "status")
-    add_table_empty_state(inventory_table, "No inventory data available.", icon="📦")
+    add_table_empty_state(inventory_table, t("inventory.empty.no_data"), icon="📦")
     inventory_table.add_slot(
         "body-cell-actions",
         """
@@ -465,12 +541,12 @@ def inventory_page() -> None:
     )
     inventory_table.add_slot(
         "header-cell-min_stock",
-        """
+        f"""
         <q-th :props="props">
-          Minimum Stock
+          {t("inventory.table.minimum_stock")}
           <q-icon name="info" size="16px" class="q-ml-xs text-grey-7">
             <q-tooltip>
-              When quantity falls below this value, product is considered Low Stock.
+              {t("inventory.table.minimum_stock_tooltip")}
             </q-tooltip>
           </q-icon>
         </q-th>
@@ -478,23 +554,50 @@ def inventory_page() -> None:
     )
 
     with ui.dialog() as history_dialog, ui.card().classes("w-[900px] max-w-full"):
-        history_title = ui.label("Stock Movement History").classes("text-h6")
+        history_title = ui.label(t("inventory.dialog.history_title")).classes("text-h6")
         history_columns = [
-            {"name": "date", "label": "Date", "field": "date", "align": "left"},
-            {"name": "movement_type", "label": "Movement Type", "field": "movement_type", "align": "left"},
-            {"name": "quantity", "label": "Quantity", "field": "quantity", "align": "right"},
-            {"name": "reference_type", "label": "Reference Type", "field": "reference_type", "align": "left"},
-            {"name": "notes", "label": "Notes", "field": "notes", "align": "left"},
+            {
+                "name": "date",
+                "label": t("common.table.date"),
+                "field": "date",
+                "align": "left",
+            },
+            {
+                "name": "movement_type",
+                "label": t("inventory.table.movement_type"),
+                "field": "movement_type",
+                "align": "left",
+            },
+            {
+                "name": "quantity",
+                "label": t("common.table.quantity"),
+                "field": "quantity",
+                "align": "right",
+            },
+            {
+                "name": "reference_type",
+                "label": t("inventory.table.reference_type"),
+                "field": "reference_type",
+                "align": "left",
+            },
+            {
+                "name": "notes",
+                "label": t("common.table.notes"),
+                "field": "notes",
+                "align": "left",
+            },
         ]
         history_table = ui.table(columns=history_columns, rows=[], row_key="id", pagination=10).classes("w-full")
         with ui.row().classes("justify-end w-full q-mt-md"):
-            ui.button("Close", on_click=history_dialog.close, color="grey-6")
+            ui.button(t("common.button.close"), on_click=history_dialog.close, color="grey-6")
 
     def open_add_stock(row: dict[str, Any]) -> None:
         nonlocal add_stock_target
         add_stock_target = row
-        add_product_name_label.text = f'Product Name: {row["product_name"]}'
-        add_current_qty_label.text = f'Current Quantity: {row["quantity"]}'
+        add_product_name_label.text = t("inventory.dialog.product_name", name=row["product_name"])
+        add_current_qty_label.text = t(
+            "inventory.dialog.current_quantity", quantity=row["quantity"]
+        )
         add_quantity_input.value = 1
         add_notes_input.value = ""
         add_stock_dialog.open()
@@ -502,14 +605,16 @@ def inventory_page() -> None:
     def open_remove_stock(row: dict[str, Any]) -> None:
         nonlocal remove_stock_target
         remove_stock_target = row
-        remove_product_name_label.text = f'Product Name: {row["product_name"]}'
-        remove_current_qty_label.text = f'Current Quantity: {row["quantity"]}'
+        remove_product_name_label.text = t("inventory.dialog.product_name", name=row["product_name"])
+        remove_current_qty_label.text = t(
+            "inventory.dialog.current_quantity", quantity=row["quantity"]
+        )
         remove_quantity_input.value = 1
         remove_notes_input.value = ""
         remove_stock_dialog.open()
 
     def open_history(row: dict[str, Any]) -> None:
-        history_title.text = f'Stock Movement History: {row["product_name"]}'
+        history_title.text = t("inventory.dialog.history_title_product", name=row["product_name"])
         history_table.rows = load_stock_movement_rows(int(row["product_id"]))
         history_table.update()
         history_dialog.open()

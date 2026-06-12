@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi.responses import RedirectResponse
 from nicegui import ui
 
+from core.i18n import t
 from pages.layout import APP_NAME, LOGO_URL, _apply_theme
 from services import auth_service
 
@@ -117,11 +118,11 @@ def login_page() -> RedirectResponse | None:
         with ui.element("div").classes("fc-login-card"):
             ui.image(LOGO_URL).classes("fc-login-logo").props("no-spinner")
             ui.label(APP_NAME).classes("fc-login-title")
-            ui.label("Sign in to your warehouse").classes("fc-login-subtitle")
+            ui.label(t("auth.login.subtitle")).classes("fc-login-subtitle")
 
-            username_input = ui.input("Username").props("outlined")
+            username_input = ui.input(t("auth.login.username")).props("outlined")
             password_input = ui.input(
-                "Password", password=True, password_toggle_button=True
+                t("auth.login.password"), password=True, password_toggle_button=True
             ).props("outlined")
 
             error_label = ui.label("").classes("fc-login-error")
@@ -140,26 +141,26 @@ def login_page() -> RedirectResponse | None:
                 password_input.value = ""
                 password_input.update()
 
-            ui.button("Login", on_click=do_login).classes("fc-login-btn")
+            ui.button(t("common.button.login"), on_click=do_login).classes("fc-login-btn")
             username_input.on("keydown.enter", lambda _: do_login())
             password_input.on("keydown.enter", lambda _: do_login())
 
             with ui.dialog() as credentials_dialog, ui.card().classes("fc-credentials-card"):
-                ui.label("Change Username / Password").classes("fc-credentials-title")
-                ui.label("Verify your current credentials to set new ones.").classes(
+                ui.label(t("auth.credentials.title")).classes("fc-credentials-title")
+                ui.label(t("auth.credentials.subtitle")).classes(
                     "fc-credentials-subtitle"
                 )
 
-                current_username_input = ui.input("Current Username").props("outlined").classes("w-full")
+                current_username_input = ui.input(t("auth.credentials.current_username")).props("outlined").classes("w-full")
                 current_password_input = ui.input(
-                    "Current Password", password=True, password_toggle_button=True
+                    t("auth.credentials.current_password"), password=True, password_toggle_button=True
                 ).props("outlined").classes("w-full")
-                new_username_input = ui.input("New Username").props("outlined").classes("w-full")
+                new_username_input = ui.input(t("auth.credentials.new_username")).props("outlined").classes("w-full")
                 new_password_input = ui.input(
-                    "New Password", password=True, password_toggle_button=True
+                    t("auth.credentials.new_password"), password=True, password_toggle_button=True
                 ).props("outlined").classes("w-full")
                 confirm_password_input = ui.input(
-                    "Confirm New Password", password=True, password_toggle_button=True
+                    t("auth.credentials.confirm_password"), password=True, password_toggle_button=True
                 ).props("outlined").classes("w-full")
 
                 dialog_error_label = ui.label("").classes("fc-login-error")
@@ -185,8 +186,8 @@ def login_page() -> RedirectResponse | None:
                     dialog_error_label.set_visibility(True)
 
                 with ui.row().classes("w-full justify-end gap-2 q-mt-sm"):
-                    ui.button("Cancel", on_click=credentials_dialog.close, color="grey-6")
-                    ui.button("Save Changes", on_click=submit_change, color="primary")
+                    ui.button(t("common.button.cancel"), on_click=credentials_dialog.close, color="grey-6")
+                    ui.button(t("common.button.save_changes"), on_click=submit_change, color="primary")
 
             def open_credentials_dialog() -> None:
                 for field in (
@@ -202,7 +203,7 @@ def login_page() -> RedirectResponse | None:
                 credentials_dialog.open()
 
             ui.button(
-                "Change Username / Password", on_click=open_credentials_dialog
+                t("auth.login.change_credentials"), on_click=open_credentials_dialog
             ).props("flat no-caps dense").classes("fc-login-link")
 
     return None

@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import selectinload
 
+from core.i18n import payment_status_label, t
 from database import SessionLocal
 from models import Debtor, Inventory, Product, Purchase, Sale
 from pages.components import (
@@ -71,9 +72,9 @@ def load_dashboard_data() -> dict[str, Any]:
             {
                 "sale_number": sale.sale_number,
                 "date": sale.sale_date.strftime("%Y-%m-%d"),
-                "customer": sale.customer.full_name if sale.customer else "-",
+                "customer": sale.customer.full_name if sale.customer else t("common.placeholder.dash"),
                 "total_amount": f"{sale.total_amount:.2f}",
-                "status": sale.payment_status or "",
+                "status": payment_status_label(sale.payment_status or ""),
             }
             for sale in recent_sales_models
         ]
@@ -88,9 +89,9 @@ def load_dashboard_data() -> dict[str, Any]:
             {
                 "purchase_number": purchase.purchase_number,
                 "date": purchase.purchase_date.strftime("%Y-%m-%d"),
-                "supplier": purchase.supplier.company_name if purchase.supplier else "-",
+                "supplier": purchase.supplier.company_name if purchase.supplier else t("common.placeholder.dash"),
                 "total_amount": f"{purchase.total_amount:.2f}",
-                "status": purchase.payment_status or "",
+                "status": payment_status_label(purchase.payment_status or ""),
             }
             for purchase in recent_purchases_models
         ]
@@ -134,41 +135,41 @@ def home_page() -> None:
 
 
 @ui.page("/dashboard")
-@with_master_layout("Dashboard")
+@with_master_layout(t("dashboard.title"))
 def dashboard_page() -> None:
-    page_header("Dashboard", "Overview of your warehouse performance at a glance.")
+    page_header(t("dashboard.title"), t("dashboard.description"))
 
     with statistic_grid():
-        total_products_label = statistic_card("Total Products", icon="category")
-        inventory_value_label = statistic_card("Inventory Value", value="0.00", icon="account_balance_wallet")
-        total_quantity_label = statistic_card("Total Quantity In Stock", icon="inventory_2")
-        low_stock_count_label = statistic_card("Low Stock Count", icon="report_problem")
-        active_debtors_label = statistic_card("Active Debtors", icon="payments")
-        outstanding_debt_label = statistic_card("Outstanding Debt", value="0.00", icon="trending_down")
+        total_products_label = statistic_card(t("dashboard.stat.total_products"), icon="category")
+        inventory_value_label = statistic_card(t("dashboard.stat.inventory_value"), value="0.00", icon="account_balance_wallet")
+        total_quantity_label = statistic_card(t("dashboard.stat.total_quantity_in_stock"), icon="inventory_2")
+        low_stock_count_label = statistic_card(t("dashboard.stat.low_stock_count"), icon="report_problem")
+        active_debtors_label = statistic_card(t("dashboard.stat.active_debtors"), icon="payments")
+        outstanding_debt_label = statistic_card(t("dashboard.stat.outstanding_debt"), value="0.00", icon="trending_down")
 
     recent_sales_columns = [
-        {"name": "sale_number", "label": "Sale Number", "field": "sale_number", "align": "left"},
-        {"name": "date", "label": "Date", "field": "date", "align": "left"},
-        {"name": "customer", "label": "Customer", "field": "customer", "align": "left"},
-        {"name": "total_amount", "label": "Total Amount", "field": "total_amount", "align": "right"},
-        {"name": "status", "label": "Status", "field": "status", "align": "center"},
+        {"name": "sale_number", "label": t("dashboard.table.sale_number"), "field": "sale_number", "align": "left"},
+        {"name": "date", "label": t("common.table.date"), "field": "date", "align": "left"},
+        {"name": "customer", "label": t("dashboard.table.customer"), "field": "customer", "align": "left"},
+        {"name": "total_amount", "label": t("dashboard.table.total_amount"), "field": "total_amount", "align": "right"},
+        {"name": "status", "label": t("common.table.status"), "field": "status", "align": "center"},
     ]
     recent_purchases_columns = [
-        {"name": "purchase_number", "label": "Purchase Number", "field": "purchase_number", "align": "left"},
-        {"name": "date", "label": "Date", "field": "date", "align": "left"},
-        {"name": "supplier", "label": "Supplier", "field": "supplier", "align": "left"},
-        {"name": "total_amount", "label": "Total Amount", "field": "total_amount", "align": "right"},
-        {"name": "status", "label": "Status", "field": "status", "align": "center"},
+        {"name": "purchase_number", "label": t("dashboard.table.purchase_number"), "field": "purchase_number", "align": "left"},
+        {"name": "date", "label": t("common.table.date"), "field": "date", "align": "left"},
+        {"name": "supplier", "label": t("dashboard.table.supplier"), "field": "supplier", "align": "left"},
+        {"name": "total_amount", "label": t("dashboard.table.total_amount"), "field": "total_amount", "align": "right"},
+        {"name": "status", "label": t("common.table.status"), "field": "status", "align": "center"},
     ]
     low_stock_columns = [
-        {"name": "product_name", "label": "Product", "field": "product_name", "align": "left"},
-        {"name": "quantity", "label": "Quantity", "field": "quantity", "align": "right"},
-        {"name": "min_stock", "label": "Min Stock", "field": "min_stock", "align": "right"},
-        {"name": "unit", "label": "Unit", "field": "unit", "align": "left"},
+        {"name": "product_name", "label": t("dashboard.table.product"), "field": "product_name", "align": "left"},
+        {"name": "quantity", "label": t("common.table.quantity"), "field": "quantity", "align": "right"},
+        {"name": "min_stock", "label": t("dashboard.table.min_stock"), "field": "min_stock", "align": "right"},
+        {"name": "unit", "label": t("dashboard.table.unit"), "field": "unit", "align": "left"},
     ]
 
     with ui.element("div").classes("fc-dash-main w-full"):
-        with data_table_card("Recent Sales", icon="point_of_sale"):
+        with data_table_card(t("dashboard.card.recent_sales"), icon="point_of_sale"):
             recent_sales_table = ui.table(
                 columns=recent_sales_columns,
                 rows=[],
@@ -179,14 +180,14 @@ def dashboard_page() -> None:
         with surface_card().classes("fc-dash-insights"):
             with ui.element("div").classes("fc-table-card-header"):
                 ui.icon("insights")
-                ui.label("Quick Insights").classes("fc-table-card-title")
+                ui.label(t("dashboard.card.quick_insights")).classes("fc-table-card-title")
             with summary_list():
-                insight_low_stock = summary_item("Low Stock Products", icon="report_problem")
-                insight_active_debtors = summary_item("Active Debtors", icon="payments")
-                insight_outstanding_debt = summary_item("Outstanding Debt", value="0.00", icon="trending_down")
-                insight_recent_purchases = summary_item("Recent Purchases", icon="shopping_cart")
+                insight_low_stock = summary_item(t("dashboard.insight.low_stock_products"), icon="report_problem")
+                insight_active_debtors = summary_item(t("dashboard.stat.active_debtors"), icon="payments")
+                insight_outstanding_debt = summary_item(t("dashboard.stat.outstanding_debt"), value="0.00", icon="trending_down")
+                insight_recent_purchases = summary_item(t("dashboard.insight.recent_purchases"), icon="shopping_cart")
 
-    with data_table_card("Recent Purchases", icon="shopping_cart"):
+    with data_table_card(t("dashboard.card.recent_purchases"), icon="shopping_cart"):
         recent_purchases_table = ui.table(
             columns=recent_purchases_columns,
             rows=[],
@@ -194,7 +195,7 @@ def dashboard_page() -> None:
             pagination=0,
         ).props("hide-pagination").classes("w-full")
 
-    with data_table_card("Low Stock Products", icon="report_problem"):
+    with data_table_card(t("dashboard.card.low_stock_products"), icon="report_problem"):
         low_stock_table = ui.table(
             columns=low_stock_columns,
             rows=[],
@@ -204,9 +205,9 @@ def dashboard_page() -> None:
 
     style_status_column(recent_sales_table, "status")
     style_status_column(recent_purchases_table, "status")
-    add_table_empty_state(recent_sales_table, "No sales recorded yet.", icon="🧾")
-    add_table_empty_state(recent_purchases_table, "No purchases recorded yet.", icon="📦")
-    add_table_empty_state(low_stock_table, "No low stock products. Everything is well stocked.", icon="✅")
+    add_table_empty_state(recent_sales_table, t("dashboard.empty.no_sales"), icon="🧾")
+    add_table_empty_state(recent_purchases_table, t("dashboard.empty.no_purchases"), icon="📦")
+    add_table_empty_state(low_stock_table, t("dashboard.empty.no_low_stock"), icon="✅")
 
     ui.add_css(
         """
@@ -245,5 +246,4 @@ def dashboard_page() -> None:
         recent_purchases_table.update()
         low_stock_table.update()
     except SQLAlchemyError:
-        ui.notify("Failed to load dashboard data.", color="negative")
-
+        ui.notify(t("dashboard.error.load_failed"), color="negative")

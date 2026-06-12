@@ -7,6 +7,7 @@ from nicegui import ui
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
+from core.i18n import t
 from database import SessionLocal
 from models import Setting
 from pages.components import page_header, surface_card
@@ -53,34 +54,34 @@ def parse_low_stock_threshold(value: Any) -> str:
     try:
         parsed = int(value)
     except (TypeError, ValueError) as exc:
-        raise ValueError("Default Low Stock Threshold must be an integer.") from exc
+        raise ValueError(t("settings.error.threshold_integer")) from exc
     if parsed < 0:
-        raise ValueError("Default Low Stock Threshold cannot be negative.")
+        raise ValueError(t("settings.error.threshold_negative"))
     return str(parsed)
 
 
 @ui.page("/settings")
-@with_master_layout("Settings")
+@with_master_layout(t("settings.title"))
 def settings_page() -> None:
-    page_header("Settings", "Configure company details and application defaults.")
+    page_header(t("settings.title"), t("settings.description"))
 
     with surface_card().classes("flex flex-col gap-3"):
-        ui.label("Company Settings").classes("text-h6 q-mb-sm")
+        ui.label(t("settings.section.company")).classes("text-h6 q-mb-sm")
         with ui.row().classes("w-full gap-2"):
-            company_name_input = ui.input("Company Name").classes("col")
-            company_phone_input = ui.input("Phone").classes("col")
+            company_name_input = ui.input(t("settings.field.company_name")).classes("col")
+            company_phone_input = ui.input(t("settings.field.phone")).classes("col")
         with ui.row().classes("w-full gap-2"):
-            company_telegram_input = ui.input("Telegram").classes("col")
-            currency_input = ui.input("Currency").classes("col")
+            company_telegram_input = ui.input(t("settings.field.telegram")).classes("col")
+            currency_input = ui.input(t("settings.field.currency")).classes("col")
         with ui.row().classes("w-full gap-2"):
-            logo_path_input = ui.input("Logo Path").classes("col")
+            logo_path_input = ui.input(t("settings.field.logo_path")).classes("col")
             low_stock_threshold_input = ui.number(
-                "Default Low Stock Threshold",
+                t("settings.field.default_low_stock_threshold"),
                 value=0,
                 min=0,
                 precision=0,
             ).classes("col")
-        company_address_input = ui.textarea("Company Address").classes("w-full")
+        company_address_input = ui.textarea(t("settings.field.company_address")).classes("w-full")
 
         with ui.row().classes("justify-end w-full q-mt-sm"):
             def reload_settings() -> None:
@@ -107,7 +108,7 @@ def settings_page() -> None:
                     low_stock_threshold_input.value = 0
                     low_stock_threshold_input.update()
                 except SQLAlchemyError:
-                    ui.notify("Failed to load settings.", color="negative")
+                    ui.notify(t("settings.notify.load_failed"), color="negative")
 
             def save_settings() -> None:
                 try:
@@ -123,17 +124,17 @@ def settings_page() -> None:
                             "default_low_stock_threshold": threshold,
                         }
                     )
-                    ui.notify("Settings saved successfully.", color="positive")
+                    ui.notify(t("settings.notify.saved"), color="positive")
                 except ValueError as exc:
                     ui.notify(str(exc), color="warning")
                 except SQLAlchemyError:
-                    ui.notify("Failed to save settings.", color="negative")
+                    ui.notify(t("settings.notify.save_failed"), color="negative")
 
-            ui.button("Reload", on_click=reload_settings, color="grey-6")
-            ui.button("Save Settings", on_click=save_settings, color="primary")
+            ui.button(t("common.button.reload"), on_click=reload_settings, color="grey-6")
+            ui.button(t("common.button.save_settings"), on_click=save_settings, color="primary")
 
     with surface_card().classes("flex flex-col gap-3"):
-        ui.label("Company Logo").classes("text-h6 q-mb-sm")
+        ui.label(t("settings.section.company_logo")).classes("text-h6 q-mb-sm")
         with ui.row().classes("w-full items-center gap-6 no-wrap"):
             preview_box = (
                 ui.element("div")
@@ -156,10 +157,10 @@ def settings_page() -> None:
                     else:
                         with ui.column().classes("items-center gap-1"):
                             ui.icon("image").classes("text-grey-5").style("font-size:40px")
-                            ui.label("No logo").classes("text-caption text-grey-6")
+                            ui.label(t("settings.logo.no_logo")).classes("text-caption text-grey-6")
 
             with ui.column().classes("flex-1 min-w-0 gap-1"):
-                ui.label("Upload a PNG, JPG, JPEG or WEBP image.").classes(
+                ui.label(t("settings.logo.upload_hint")).classes(
                     "text-caption text-grey-7"
                 )
 
@@ -167,7 +168,7 @@ def settings_page() -> None:
                     ext = image_service.extension_of(e.file.name)
                     if ext is None:
                         ui.notify(
-                            "Only PNG, JPG, JPEG and WEBP images are allowed.",
+                            t("settings.logo.invalid_format"),
                             color="warning",
                         )
                         logo_upload.reset()
@@ -176,17 +177,17 @@ def settings_page() -> None:
                     try:
                         relative_path = image_service.save_company_logo(data, ext)
                     except (OSError, SQLAlchemyError):
-                        ui.notify("Failed to save company logo.", color="negative")
+                        ui.notify(t("settings.notify.logo_save_failed"), color="negative")
                         return
                     logo_path_input.value = relative_path
                     logo_path_input.update()
                     logo_upload.reset()
                     render_logo_preview()
-                    ui.notify("Company logo updated successfully.", color="positive")
+                    ui.notify(t("settings.notify.logo_updated"), color="positive")
 
                 logo_upload = (
                     ui.upload(
-                        label="Upload Logo",
+                        label=t("common.button.upload_logo"),
                         auto_upload=True,
                         max_file_size=10 * 1024 * 1024,
                         on_upload=handle_logo_upload,
@@ -198,4 +199,3 @@ def settings_page() -> None:
         render_logo_preview()
 
     reload_settings()
-
