@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from nicegui import ui
@@ -17,7 +17,7 @@ from pages.components import (
 )
 from pages.inventory import load_filter_options
 from pages.layout import with_master_layout
-from services import reports_service
+from services import excel_export, reports_service
 
 
 def _report_type_options() -> dict[str, str]:
@@ -507,7 +507,14 @@ def reports_page() -> None:
                     value="",
                 ).classes("min-w-[180px] flex-1")
 
-        with ui.row().classes("w-full justify-end"):
+        with ui.row().classes("w-full justify-end gap-2"):
+            export_excel_button = ui.button(
+                t("reports.button.export_excel"),
+                on_click=lambda: on_export_excel(),
+                icon="table_view",
+                color="positive",
+            )
+            export_excel_button.disable()
             ui.button(
                 t("reports.button.generate"),
                 on_click=lambda: on_generate(),
@@ -702,6 +709,41 @@ def reports_page() -> None:
         style_status_column(preview_table, "status")
         add_table_empty_state(preview_table, t("reports.empty.no_report"), icon="📊")
 
+        preview_state: dict[str, Any] = {
+            "report_type": None,
+            "report_title": "",
+            "columns": [],
+            "rows": [],
+            "date_from": None,
+            "date_to": None,
+        }
+
+        def set_preview_state(
+            *,
+            report_type: str,
+            report_title: str,
+            columns: list[dict[str, Any]],
+            rows: list[dict[str, Any]],
+            date_from: str | None = None,
+            date_to: str | None = None,
+        ) -> None:
+            preview_state["report_type"] = report_type
+            preview_state["report_title"] = report_title
+            preview_state["columns"] = columns
+            preview_state["rows"] = rows
+            preview_state["date_from"] = date_from
+            preview_state["date_to"] = date_to
+            export_excel_button.enable()
+
+        def clear_preview_state() -> None:
+            preview_state["report_type"] = None
+            preview_state["report_title"] = ""
+            preview_state["columns"] = []
+            preview_state["rows"] = []
+            preview_state["date_from"] = None
+            preview_state["date_to"] = None
+            export_excel_button.disable()
+
         def sync_custom_dates_visibility() -> None:
             custom_dates_row.set_visibility(selection["date_range"] == "custom")
 
@@ -735,7 +777,8 @@ def reports_page() -> None:
             stock_movements_summary.set_visibility(False)
 
         def show_sales_preview(rows: list[dict[str, Any]]) -> None:
-            preview_table.columns = _sales_report_columns()
+            columns = _sales_report_columns()
+            preview_table.columns = columns
             preview_table._props["row-key"] = "sale_number"
             preview_table.rows = rows
             preview_table.update()
@@ -748,9 +791,18 @@ def reports_page() -> None:
             sales_summary.set_visibility(True)
             preview_empty.set_visibility(False)
             preview_content.set_visibility(True)
+            set_preview_state(
+                report_type="sales",
+                report_title=t("reports.type.sales"),
+                columns=columns,
+                rows=rows,
+                date_from=selection.get("resolved_date_from"),
+                date_to=selection.get("resolved_date_to"),
+            )
 
         def show_inventory_preview(rows: list[dict[str, Any]]) -> None:
-            preview_table.columns = _inventory_report_columns()
+            columns = _inventory_report_columns()
+            preview_table.columns = columns
             preview_table._props["row-key"] = "product_id"
             preview_table.rows = rows
             preview_table.update()
@@ -763,9 +815,16 @@ def reports_page() -> None:
             inventory_summary.set_visibility(True)
             preview_empty.set_visibility(False)
             preview_content.set_visibility(True)
+            set_preview_state(
+                report_type="inventory",
+                report_title=t("reports.type.inventory"),
+                columns=columns,
+                rows=rows,
+            )
 
         def show_purchase_preview(rows: list[dict[str, Any]]) -> None:
-            preview_table.columns = _purchase_report_columns()
+            columns = _purchase_report_columns()
+            preview_table.columns = columns
             preview_table._props["row-key"] = "purchase_number"
             preview_table.rows = rows
             preview_table.update()
@@ -777,9 +836,18 @@ def reports_page() -> None:
             purchase_summary.set_visibility(True)
             preview_empty.set_visibility(False)
             preview_content.set_visibility(True)
+            set_preview_state(
+                report_type="purchases",
+                report_title=t("reports.type.purchases"),
+                columns=columns,
+                rows=rows,
+                date_from=selection.get("resolved_date_from"),
+                date_to=selection.get("resolved_date_to"),
+            )
 
         def show_debtors_preview(rows: list[dict[str, Any]]) -> None:
-            preview_table.columns = _debtors_report_columns()
+            columns = _debtors_report_columns()
+            preview_table.columns = columns
             preview_table._props["row-key"] = "debtor_id"
             preview_table.rows = rows
             preview_table.update()
@@ -792,9 +860,18 @@ def reports_page() -> None:
             debtors_summary.set_visibility(True)
             preview_empty.set_visibility(False)
             preview_content.set_visibility(True)
+            set_preview_state(
+                report_type="debtors",
+                report_title=t("reports.type.debtors"),
+                columns=columns,
+                rows=rows,
+                date_from=selection.get("resolved_date_from"),
+                date_to=selection.get("resolved_date_to"),
+            )
 
         def show_product_sales_preview(rows: list[dict[str, Any]]) -> None:
-            preview_table.columns = _product_sales_report_columns()
+            columns = _product_sales_report_columns()
+            preview_table.columns = columns
             preview_table._props["row-key"] = "product_id"
             preview_table.rows = rows
             preview_table.update()
@@ -806,9 +883,18 @@ def reports_page() -> None:
             product_sales_summary.set_visibility(True)
             preview_empty.set_visibility(False)
             preview_content.set_visibility(True)
+            set_preview_state(
+                report_type="product_sales",
+                report_title=t("reports.type.product_sales"),
+                columns=columns,
+                rows=rows,
+                date_from=selection.get("resolved_date_from"),
+                date_to=selection.get("resolved_date_to"),
+            )
 
         def show_supplier_preview(rows: list[dict[str, Any]]) -> None:
-            preview_table.columns = _supplier_report_columns()
+            columns = _supplier_report_columns()
+            preview_table.columns = columns
             preview_table._props["row-key"] = "supplier_id"
             preview_table.rows = rows
             preview_table.update()
@@ -821,9 +907,18 @@ def reports_page() -> None:
             suppliers_summary.set_visibility(True)
             preview_empty.set_visibility(False)
             preview_content.set_visibility(True)
+            set_preview_state(
+                report_type="suppliers",
+                report_title=t("reports.type.suppliers"),
+                columns=columns,
+                rows=rows,
+                date_from=selection.get("resolved_date_from"),
+                date_to=selection.get("resolved_date_to"),
+            )
 
         def show_customer_preview(rows: list[dict[str, Any]]) -> None:
-            preview_table.columns = _customer_report_columns()
+            columns = _customer_report_columns()
+            preview_table.columns = columns
             preview_table._props["row-key"] = "customer_id"
             preview_table.rows = rows
             preview_table.update()
@@ -836,9 +931,18 @@ def reports_page() -> None:
             customers_summary.set_visibility(True)
             preview_empty.set_visibility(False)
             preview_content.set_visibility(True)
+            set_preview_state(
+                report_type="customers",
+                report_title=t("reports.type.customers"),
+                columns=columns,
+                rows=rows,
+                date_from=selection.get("resolved_date_from"),
+                date_to=selection.get("resolved_date_to"),
+            )
 
         def show_stock_movement_preview(rows: list[dict[str, Any]]) -> None:
-            preview_table.columns = _stock_movement_report_columns()
+            columns = _stock_movement_report_columns()
+            preview_table.columns = columns
             preview_table._props["row-key"] = "movement_id"
             preview_table.rows = rows
             preview_table.update()
@@ -851,12 +955,21 @@ def reports_page() -> None:
             stock_movements_summary.set_visibility(True)
             preview_empty.set_visibility(False)
             preview_content.set_visibility(True)
+            set_preview_state(
+                report_type="stock_movements",
+                report_title=t("reports.type.stock_movements"),
+                columns=columns,
+                rows=rows,
+                date_from=selection.get("resolved_date_from"),
+                date_to=selection.get("resolved_date_to"),
+            )
 
         def show_empty_preview() -> None:
             preview_table.rows = []
             preview_table.update()
             preview_empty.set_visibility(True)
             preview_content.set_visibility(False)
+            clear_preview_state()
 
         preview_handlers: dict[str, Any] = {
             "sales": show_sales_preview,
@@ -869,6 +982,28 @@ def reports_page() -> None:
             "stock_movements": show_stock_movement_preview,
         }
 
+        def on_export_excel() -> None:
+            if not preview_state.get("report_type") or not preview_state.get("columns"):
+                ui.notify(t("reports.notify.export_empty"), color="warning")
+                return
+            try:
+                content = excel_export.build_report_workbook(
+                    report_title=str(preview_state["report_title"]),
+                    columns=list(preview_state["columns"]),
+                    rows=list(preview_state["rows"]),
+                    date_from=preview_state.get("date_from"),
+                    date_to=preview_state.get("date_to"),
+                )
+                report_type = str(preview_state["report_type"])
+                excel_export.save_report_workbook(content, report_type=report_type)
+                filename = (
+                    f"{report_type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+                )
+                ui.download.content(content, filename)
+                ui.notify(t("reports.notify.export_ready"), color="positive")
+            except Exception:
+                ui.notify(t("reports.notify.export_failed"), color="negative")
+
         def on_generate() -> None:
             selection["date_from"] = str(from_date_input.value or "")
             selection["date_to"] = str(to_date_input.value or "")
@@ -880,6 +1015,8 @@ def reports_page() -> None:
                 return
 
             if report_type == "inventory":
+                selection["resolved_date_from"] = None
+                selection["resolved_date_to"] = None
                 selection["filters"] = {
                     "search": str(search_input.value or ""),
                     "category_id": str(category_filter.value or ""),
@@ -899,6 +1036,8 @@ def reports_page() -> None:
                 selection["date_from"],
                 selection["date_to"],
             )
+            selection["resolved_date_from"] = date_from
+            selection["resolved_date_to"] = date_to
             rows = reports_service.generate_report(
                 report_type=report_type,
                 date_from=date_from,

@@ -1,0 +1,184 @@
+"""Excel export for report previews (openpyxl)."""
+
+from __future__ import annotations
+
+from datetime import datetime
+from decimal import Decimal, InvalidOperation
+from io import BytesIO
+from pathlib import Path
+from typing import Any
+
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Font
+from openpyxl.utils import get_column_letter
+
+from pages.settings import load_settings_values
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+EXPORTS_DIR = PROJECT_ROOT / "exports"
+
+_CURRENCY_FIELDS: frozenset[str] = frozenset(
+    {
+        "total_amount",
+        "paid_amount",
+        "remaining_amount",
+        "total",
+        "paid",
+        "remaining",
+        "unit_price",
+        "inventory_value",
+        "debt",
+        "revenue",
+        "total_spent",
+        "total_revenue",
+        "outstanding_debt",
+        "warehouse_value",
+    }
+)
+
+_CURRENCY_NUMBER_FORMAT = '#,##0.00'
+
+
+def _to_number(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        return float(Decimal(str(value).strip().replace(",", "")))
+    except (InvalidOperation, ValueError, AttributeError):
+        return None
+
+
+def _auto_column_width(worksheet: Any) -> None:
+    for column_cells in worksheet.columns:
+        max_length = 0
+        column_letter = get_column_letter(column_cells[0].column)
+        for cell in column_cells:
+            value = "" if cell.value is None else str(cell.value)
+            max_length = max(max_length, len(value))
+        worksheet.column_dimensions[column_letter].width = min(max(max_length + 2, 12), 48)
+
+
+def build_report_workbook(
+    *,
+    report_title: str,
+    columns: list[dict[str, Any]],
+    rows: list[dict[str, Any]],
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> bytes:
+    """Build a single-worksheet workbook for the currently displayed report."""
+    settings = load_settings_values()
+    company_name = settings.get("company_name") or "FlowCore"
+    company_address = settings.get("company_address") or ""
+    company_phone = settings.get("company_phone") or ""
+    company_telegram = settings.get("company_telegram") or ""
+    currency = settings.get("currency") or ""
+
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "Report"
+
+    bold = Font(bold=True)
+    meta_font = Font(size=11)
+
+    row_index = 1
+    worksheet.cell(row=row_index, column=1, value=company_name).font = Font(bold=True, size=14)
+    row_index += 1
+
+    if company_address:
+        worksheet.cell(row=row_index, column=1, value=company_address).font = meta_font
+        row_index += 1
+    contact_parts = []
+    if company_phone:
+        contact_parts.append(company_phone)
+    if company_telegram:
+        contact_parts.append(f"Telegram: {company_telegram}")
+    if contact_parts:
+        worksheet.cell(row=row_index, column=1, value=" | ".join(contact_parts)).font = meta_font
+        row_index += 1
+    if currency:
+        worksheet.cell(row=row_index, column=1, value=f"Currency: {currency}").font = meta_font
+        row_index += 1
+
+    row_index += 1
+    worksheet.cell(row=row_index, column=1, value=report_title).font = Font(bold=True, size=12)
+    row_index += 1
+
+    generated_at = datetime.now().strftime("%Y-%m-%d %H:%M")
+    period = ""
+    if date_from or date_to:
+        period = f" | Period: {date_from or '…'} — {date_to or '…'}"
+    worksheet.cell(
+        row=row_index,
+        column=1,
+        value=f"Generated: {generated_at}{period}",
+    ).font = meta_font
+    row_index += 2
+
+    export_columns = [
+        column
+        for column in columns
+        if column.get("field") and column.get("field") not in {"status_code", "movement_type_code"}
+    ]
+    header_row = row_index
+    for col_index, column in enumerate(export_columns, start=1):
+        cell = worksheet.cell(
+            row=header_row,
+            column=col_index,
+            value=str(column.get("label") or column.get("field") or ""),
+        )
+        cell.font = bold
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    for data_offset, row in enumerate(rows):
+        excel_row = header_row + 1 + data_offset
+        for col_index, column in enumerate(export_columns, start=1):
+            field = str(column.get("field") or "")
+            raw_value = row.get(field, "")
+            cell = worksheet.cell(row=excel_row, column=col_index)
+            if field in _CURRENCY_FIELDS:
+                numeric = _to_number(raw_value)
+                if numeric is not None:
+                    cell.value = numeric
+                    cell.number_format = _CURRENCY_NUMBER_FORMAT
+                    cell.alignment = Alignment(horizontal="right")
+                else:
+                    cell.value = raw_value
+            elif isinstance(raw_value, (int, float)) and not isinstance(raw_value, bool):
+                cell.value = raw_value
+                cell.alignment = Alignment(horizontal="right")
+            else:
+                numeric = _to_number(raw_value) if field in {"quantity", "quantity_sold", "items_count"} else None
+                if numeric is not None and str(raw_value).replace(".", "", 1).isdigit():
+                    cell.value = int(numeric) if float(numeric).is_integer() else numeric
+                    cell.alignment = Alignment(horizontal="right")
+                else:
+                    cell.value = raw_value if raw_value is not None else ""
+
+    last_col = max(len(export_columns), 1)
+    last_data_row = header_row + max(len(rows), 1)
+    worksheet.auto_filter.ref = (
+        f"A{header_row}:{get_column_letter(last_col)}{last_data_row}"
+    )
+    worksheet.freeze_panes = f"A{header_row + 1}"
+    _auto_column_width(worksheet)
+
+    buffer = BytesIO()
+    workbook.save(buffer)
+    return buffer.getvalue()
+
+
+def save_report_workbook(
+    content: bytes,
+    *,
+    report_type: str,
+) -> Path:
+    """Persist workbook under exports/ and return the path."""
+    EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_type = (report_type or "report").strip().lower().replace(" ", "_") or "report"
+    path = EXPORTS_DIR / f"{safe_type}_{stamp}.xlsx"
+    path.write_bytes(content)
+    return path
