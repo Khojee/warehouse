@@ -27,6 +27,7 @@ NAV_ITEMS = [
     {"label_key": "nav.purchases", "path": "/purchases", "icon": "shopping_cart"},
     {"label_key": "nav.sales", "path": "/sales", "icon": "point_of_sale"},
     {"label_key": "nav.debtors", "path": "/debtors", "icon": "payments"},
+    {"label_key": "nav.reports", "path": "/reports", "icon": "assessment"},
     {"label_key": "nav.settings", "path": "/settings", "icon": "settings"},
 ]
 
