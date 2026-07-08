@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
-from typing import Any
+from typing import Any, Literal
 
 from nicegui import ui
 from sqlalchemy import func, select
@@ -11,7 +12,6 @@ from sqlalchemy.orm import selectinload
 from core.i18n import t
 from database import SessionLocal
 from models import Product, ProductCategory
-from services import image_service
 from pages.components import (
     add_table_empty_state,
     data_table_card,
@@ -20,6 +20,7 @@ from pages.components import (
     search_panel,
 )
 from pages.layout import with_master_layout
+from services import excel_export, image_service, pdf_export
 
 
 OTHER_CATEGORY_OPTION = "other"
@@ -74,37 +75,54 @@ def load_products(
             stmt = stmt.where(Product.min_stock > 0)
 
         products = session.scalars(stmt).all()
+        return [_product_to_row(product) for product in products]
 
-        def primary_image_url(product: Product) -> str:
-            images = sorted(product.images, key=lambda img: not img.is_primary)
-            for image in images:
-                relative = (image.file_path or "").strip().replace("\\", "/")
-                if relative and (image_service.PROJECT_ROOT / relative).exists():
-                    return f"/{relative}"
-            return ""
 
-        return [
-            {
-                "id": product.id,
-                "image_url": primary_image_url(product),
-                "name": product.name,
-                "category_id": product.category_id or "",
-                "category": (
-                    product.product_category.name
-                    if product.product_category is not None
-                    else (product.category or "")
-                ),
-                "size": product.size or "",
-                "pressure": product.pressure or "",
-                "material": product.material or "",
-                "unit": product.unit,
-                "current_price": f"{product.current_price:.2f}",
-                "min_stock": product.min_stock,
-                "description": product.description or "",
-            }
-            for product in products
-        ]
+def load_products_by_ids(product_ids: set[int] | list[int]) -> list[dict[str, Any]]:
+    ids = sorted({int(pid) for pid in product_ids})
+    if not ids:
+        return []
+    with SessionLocal() as session:
+        products = session.scalars(
+            select(Product)
+            .options(
+                selectinload(Product.product_category),
+                selectinload(Product.images),
+            )
+            .where(Product.id.in_(ids))
+            .order_by(Product.id.desc())
+        ).all()
+    return [_product_to_row(product) for product in products]
 
+
+def _primary_image_url(product: Product) -> str:
+    images = sorted(product.images, key=lambda img: not img.is_primary)
+    for image in images:
+        relative = (image.file_path or "").strip().replace("\\", "/")
+        if relative and (image_service.PROJECT_ROOT / relative).exists():
+            return f"/{relative}"
+    return ""
+
+
+def _product_to_row(product: Product) -> dict[str, Any]:
+    return {
+        "id": product.id,
+        "image_url": _primary_image_url(product),
+        "name": product.name,
+        "category_id": product.category_id or "",
+        "category": (
+            product.product_category.name
+            if product.product_category is not None
+            else (product.category or "")
+        ),
+        "size": product.size or "",
+        "pressure": product.pressure or "",
+        "material": product.material or "",
+        "unit": product.unit,
+        "current_price": f"{product.current_price:.2f}",
+        "min_stock": product.min_stock,
+        "description": product.description or "",
+    }
 
 def load_filter_options() -> dict[str, list[str]]:
     with SessionLocal() as session:
@@ -275,6 +293,21 @@ def delete_product(product_id: int) -> bool:
 @ui.page("/products")
 @with_master_layout(t("products.title"))
 def products_page() -> None:
+    # Column width only — does not scale/shrink the checkbox itself.
+    ui.add_css(
+        """
+        .fc-products-table .q-table th.q-table--col-auto-width,
+        .fc-products-table .q-table td.q-table--col-auto-width {
+            width: 48px !important;
+            min-width: 48px !important;
+            max-width: 48px !important;
+            text-align: center;
+            vertical-align: middle;
+            padding-left: 0;
+            padding-right: 0;
+        }
+        """
+    )
     page_header(t("products.title"), t("products.description"))
 
     filters = {
@@ -286,6 +319,23 @@ def products_page() -> None:
     }
     selected_row: dict[str, Any] | None = None
     editing_product_id: int | None = None
+    # Persist checkbox selection across filter/search refreshes for this page session.
+    selected_product_ids: set[int] = set()
+    pending_export_format: Literal["pdf", "excel"] | None = None
+    export_options: dict[str, Any] = {
+        "images": True,
+        "prices": True,
+        "category": True,
+        "material": True,
+        "pressure": True,
+        "unit": True,
+        "description": True,
+        "orientation": "portrait",
+    }
+    filtered_rows: list[dict[str, Any]] = []
+    syncing_selection = False
+    syncing_select_all = False
+    select_all_checkbox: Any = None
 
     columns = [
         {"name": "image", "label": t("common.table.image"), "field": "image_url", "align": "center"},
@@ -372,14 +422,21 @@ def products_page() -> None:
             if table is None:
                 return
 
-            table.rows = load_products(
+            rows = load_products(
                 name=filters["name"],
                 category_id=filters["category_id"],
                 size=filters["size"],
                 pressure=filters["pressure"],
                 stock_status=filters["stock_status"],
             )
-            table.update()
+            filtered_rows.clear()
+            filtered_rows.extend(rows)
+            table.rows = rows
+            # Keep ID-based selection across filters/search/pagination;
+            # only sync checkboxes for rows present in the current result set.
+            sync_table_selection_from_ids()
+            update_selection_count()
+            update_select_all_checkbox()
         except SQLAlchemyError:
             ui.notify(t("products.notify.load_failed"), color="negative")
 
@@ -690,8 +747,10 @@ def products_page() -> None:
                     delete_dialog.close()
                     return
                 try:
-                    deleted = delete_product(int(selected_row["id"]))
+                    product_id = int(selected_row["id"])
+                    deleted = delete_product(product_id)
                     if deleted:
+                        selected_product_ids.discard(product_id)
                         ui.notify(t("products.notify.product_deleted"), color="positive")
                     else:
                         ui.notify(t("products.notify.product_not_found"), color="warning")
@@ -718,6 +777,335 @@ def products_page() -> None:
         add_inputs["category"].update()
         _reset_form(add_inputs)
         add_dialog.open()
+
+    def filtered_product_ids() -> set[int]:
+        return {int(row["id"]) for row in filtered_rows}
+
+    def sync_table_selection_from_ids() -> None:
+        nonlocal syncing_selection
+        if table is None:
+            return
+        syncing_selection = True
+        try:
+            table.selected = [
+                row for row in filtered_rows if int(row["id"]) in selected_product_ids
+            ]
+            table.update()
+        finally:
+            syncing_selection = False
+
+    def update_selection_count() -> None:
+        selection_count_label.text = t(
+            "products.selection.count",
+            count=len(selected_product_ids),
+        )
+
+    def update_select_all_checkbox() -> None:
+        nonlocal syncing_select_all
+        if select_all_checkbox is None:
+            return
+        filtered_ids = filtered_product_ids()
+        selected_in_filter = selected_product_ids.intersection(filtered_ids)
+        syncing_select_all = True
+        try:
+            if filtered_ids and filtered_ids.issubset(selected_product_ids):
+                select_all_checkbox.value = True
+                select_all_checkbox.props(remove="indeterminate")
+            elif selected_in_filter:
+                select_all_checkbox.value = False
+                select_all_checkbox.props(add="indeterminate")
+            else:
+                select_all_checkbox.value = False
+                select_all_checkbox.props(remove="indeterminate")
+            select_all_checkbox.update()
+        finally:
+            syncing_select_all = False
+
+    def on_table_select(_: Any = None) -> None:
+        if table is None or syncing_selection:
+            return
+        # Update only IDs in the current filter result; keep out-of-filter selections.
+        filtered_ids = filtered_product_ids()
+        ui_selected_filtered = {int(row["id"]) for row in table.selected}
+        selected_product_ids.difference_update(filtered_ids)
+        selected_product_ids.update(ui_selected_filtered)
+        update_selection_count()
+        update_select_all_checkbox()
+
+    def on_select_all_header(_: Any = None) -> None:
+        """Toggle filter-wide Select All (same scope as filtered search results)."""
+        if syncing_select_all:
+            return
+        filtered_ids = filtered_product_ids()
+        if not filtered_ids:
+            update_select_all_checkbox()
+            return
+        # Toggle from current ID state so uncheck works even if Vue passes a stale value.
+        if filtered_ids.issubset(selected_product_ids):
+            selected_product_ids.difference_update(filtered_ids)
+        else:
+            selected_product_ids.update(filtered_ids)
+        sync_table_selection_from_ids()
+        update_selection_count()
+        update_select_all_checkbox()
+
+    def clear_all_selection() -> None:
+        selected_product_ids.clear()
+        sync_table_selection_from_ids()
+        update_selection_count()
+        update_select_all_checkbox()
+
+    def resolve_export_rows() -> list[dict[str, Any]]:
+        """Selected products (by ID) if any; otherwise all currently filtered rows."""
+        if selected_product_ids:
+            return load_products_by_ids(selected_product_ids)
+        return list(filtered_rows)
+
+    def build_catalog_columns(options: dict[str, Any]) -> list[dict[str, Any]]:
+        columns_out: list[dict[str, Any]] = []
+        if options.get("images", True):
+            columns_out.append(
+                {
+                    "name": "image",
+                    "label": t("products.export.column.image"),
+                    "field": "image_url",
+                    "align": "center",
+                }
+            )
+        columns_out.append(
+            {
+                "name": "name",
+                "label": t("products.field.name"),
+                "field": "name",
+                "align": "left",
+            }
+        )
+        if options.get("category", True):
+            columns_out.append(
+                {
+                    "name": "category",
+                    "label": t("products.field.category"),
+                    "field": "category",
+                    "align": "left",
+                }
+            )
+        columns_out.append(
+            {
+                "name": "size",
+                "label": t("products.field.size"),
+                "field": "size",
+                "align": "left",
+            }
+        )
+        if options.get("pressure", True):
+            columns_out.append(
+                {
+                    "name": "pressure",
+                    "label": t("products.field.pressure"),
+                    "field": "pressure",
+                    "align": "left",
+                }
+            )
+        if options.get("material", True):
+            columns_out.append(
+                {
+                    "name": "material",
+                    "label": t("products.field.material"),
+                    "field": "material",
+                    "align": "left",
+                }
+            )
+        if options.get("unit", True):
+            columns_out.append(
+                {
+                    "name": "unit",
+                    "label": t("products.field.unit"),
+                    "field": "unit",
+                    "align": "left",
+                }
+            )
+        if options.get("prices", True):
+            columns_out.append(
+                {
+                    "name": "current_price",
+                    "label": t("products.field.current_price"),
+                    "field": "current_price",
+                    "align": "right",
+                }
+            )
+        if options.get("description", True):
+            columns_out.append(
+                {
+                    "name": "description",
+                    "label": t("products.field.description"),
+                    "field": "description",
+                    "align": "left",
+                }
+            )
+        return columns_out
+
+    def render_export_preview(rows: list[dict[str, Any]]) -> None:
+        export_preview_container.clear()
+        with export_preview_container:
+            preview_rows = rows[:20]
+            for row in preview_rows:
+                with ui.row().classes("w-full items-center gap-3 q-py-xs no-wrap"):
+                    image_url = str(row.get("image_url") or "")
+                    if image_url:
+                        ui.image(image_url).classes("rounded").style(
+                            "width:48px;height:48px;object-fit:cover;flex:0 0 auto;"
+                        )
+                    else:
+                        ui.icon("image", size="28px").classes("text-grey-5")
+                    with ui.column().classes("gap-0 min-w-0 flex-1"):
+                        ui.label(str(row.get("name") or "")).classes("text-weight-medium")
+                        meta = " · ".join(
+                            part
+                            for part in [
+                                str(row.get("category") or ""),
+                                str(row.get("size") or ""),
+                                str(row.get("pressure") or ""),
+                                str(row.get("material") or ""),
+                            ]
+                            if part
+                        )
+                        if meta:
+                            ui.label(meta).classes("text-caption text-grey-7")
+                    ui.label(str(row.get("current_price") or "")).classes("text-weight-medium")
+            remaining = len(rows) - len(preview_rows)
+            if remaining > 0:
+                ui.label(t("products.export.more_items", count=remaining)).classes(
+                    "text-caption text-grey-7 q-mt-sm"
+                )
+
+    def open_export_dialog(export_format: Literal["pdf", "excel"]) -> None:
+        nonlocal pending_export_format
+        rows = resolve_export_rows()
+        if not rows:
+            ui.notify(t("products.notify.export_empty"), color="warning")
+            return
+        pending_export_format = export_format
+        if selected_product_ids:
+            export_selected_count_label.text = t(
+                "products.export.selected_count",
+                count=len(selected_product_ids),
+            )
+        else:
+            export_selected_count_label.text = t(
+                "products.export.selected_count",
+                count=len(filtered_rows),
+            )
+        export_filtered_count_label.text = t(
+            "products.export.filtered_count",
+            count=len(filtered_rows),
+        )
+        option_images.value = export_options["images"]
+        option_prices.value = export_options["prices"]
+        option_category.value = export_options["category"]
+        option_material.value = export_options["material"]
+        option_pressure.value = export_options["pressure"]
+        option_unit.value = export_options["unit"]
+        option_description.value = export_options["description"]
+        orientation_select.value = export_options.get("orientation") or "portrait"
+        orientation_select.set_visibility(export_format == "pdf")
+        render_export_preview(rows)
+        export_dialog.open()
+
+    def confirm_export() -> None:
+        nonlocal pending_export_format
+        rows = resolve_export_rows()
+        if not rows or pending_export_format is None:
+            ui.notify(t("products.notify.export_empty"), color="warning")
+            export_dialog.close()
+            return
+
+        export_options["images"] = bool(option_images.value)
+        export_options["prices"] = bool(option_prices.value)
+        export_options["category"] = bool(option_category.value)
+        export_options["material"] = bool(option_material.value)
+        export_options["pressure"] = bool(option_pressure.value)
+        export_options["unit"] = bool(option_unit.value)
+        export_options["description"] = bool(option_description.value)
+        export_options["orientation"] = str(orientation_select.value or "portrait")
+
+        catalog_columns = build_catalog_columns(export_options)
+        title = t("products.export.catalog_title")
+        export_format = pending_export_format
+        try:
+            if export_format == "pdf":
+                content = pdf_export.build_catalog_pdf(
+                    report_title=title,
+                    columns=catalog_columns,
+                    rows=rows,
+                    landscape_orientation=export_options["orientation"] == "landscape",
+                )
+                pdf_export.save_report_pdf(content, report_type="product_catalog")
+                filename = f"product_catalog_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+                ui.download.content(content, filename, media_type="application/pdf")
+                ui.notify(t("products.notify.export_pdf_ready"), color="positive")
+            else:
+                content = excel_export.build_catalog_workbook(
+                    report_title=title,
+                    columns=catalog_columns,
+                    rows=rows,
+                )
+                excel_export.save_report_workbook(content, report_type="product_catalog")
+                filename = f"product_catalog_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+                ui.download.content(content, filename)
+                ui.notify(t("products.notify.export_excel_ready"), color="positive")
+        except Exception:
+            ui.notify(t("products.notify.export_failed"), color="negative")
+        finally:
+            pending_export_format = None
+            export_dialog.close()
+
+    export_dialog = ui.dialog()
+    with export_dialog, ui.card().classes("w-[720px] max-w-full"):
+        ui.label(t("products.export.dialog_title")).classes("text-h6")
+        with ui.column().classes("w-full gap-1 q-mt-sm"):
+            with ui.row().classes("w-full items-center gap-2"):
+                ui.label(t("products.export.selected_label")).classes("text-weight-medium")
+                export_selected_count_label = ui.label("").classes("text-weight-bold")
+            with ui.row().classes("w-full items-center gap-2"):
+                ui.label(t("products.export.filtered_label")).classes("text-weight-medium")
+                export_filtered_count_label = ui.label("").classes("text-weight-bold")
+
+        export_preview_container = ui.column().classes(
+            "w-full q-mt-md gap-1 max-h-[280px] overflow-auto"
+        )
+
+        ui.separator().classes("q-my-md")
+        with ui.column().classes("w-full gap-1"):
+            option_images = ui.checkbox(t("products.export.option.images"), value=True)
+            option_prices = ui.checkbox(t("products.export.option.prices"), value=True)
+            option_category = ui.checkbox(t("products.export.option.category"), value=True)
+            option_material = ui.checkbox(t("products.export.option.material"), value=True)
+            option_pressure = ui.checkbox(t("products.export.option.pressure"), value=True)
+            option_unit = ui.checkbox(t("products.export.option.unit"), value=True)
+            option_description = ui.checkbox(
+                t("products.export.option.description"),
+                value=True,
+            )
+            orientation_select = ui.select(
+                options={
+                    "portrait": t("products.export.orientation.portrait"),
+                    "landscape": t("products.export.orientation.landscape"),
+                },
+                label=t("products.export.option.orientation"),
+                value="portrait",
+            ).classes("w-full q-mt-sm")
+
+        with ui.row().classes("w-full justify-end gap-2 q-mt-md"):
+            ui.button(
+                t("products.export.cancel"),
+                on_click=export_dialog.close,
+                color="grey-6",
+            )
+            ui.button(
+                t("products.export.confirm"),
+                on_click=confirm_export,
+                color="primary",
+            )
 
     with ui.row().classes("w-full items-start gap-4 no-wrap"):
         with filter_sidebar():
@@ -772,20 +1160,79 @@ def products_page() -> None:
 
         with ui.column().classes("flex-1 min-w-0"):
             with search_panel():
-                with ui.row().classes("w-full items-end no-wrap gap-3"):
+                with ui.row().classes("w-full items-end no-wrap gap-3 flex-wrap"):
                     ui.input(
                         label=t("products.search.label"),
                         placeholder=t("products.search.placeholder"),
                         on_change=lambda e: filters.__setitem__("name", e.value or ""),
-                    ).classes("flex-1 min-w-0")
+                    ).classes("flex-1 min-w-[180px]")
                     ui.button(t("common.button.search"), on_click=refresh_table, icon="search")
-                    ui.button(t("products.button.add_product"), on_click=open_add_dialog, icon="add")
+                    ui.button(
+                        t("products.button.add_product"),
+                        on_click=open_add_dialog,
+                        icon="add",
+                    )
+                    ui.button(
+                        t("products.button.export_pdf"),
+                        on_click=lambda: open_export_dialog("pdf"),
+                        icon="picture_as_pdf",
+                        color="primary",
+                    )
+                    ui.button(
+                        t("products.button.export_excel"),
+                        on_click=lambda: open_export_dialog("excel"),
+                        icon="table_view",
+                        color="positive",
+                    )
+
+            with ui.row().classes(
+                "w-full items-center gap-3 q-mb-sm flex-wrap no-wrap"
+            ):
+                selection_count_label = ui.label(
+                    t("products.selection.count", count=0)
+                ).classes("text-subtitle2 text-grey-8")
+                ui.space()
+                ui.button(
+                    t("products.selection.clear"),
+                    on_click=clear_all_selection,
+                    icon="deselect",
+                    color="grey-6",
+                ).props("flat dense")
 
             with data_table_card():
-                table = ui.table(columns=columns, rows=[], row_key="id", pagination=10).classes(
-                    "w-full"
-                )
+                table = ui.table(
+                    columns=columns,
+                    rows=[],
+                    row_key="id",
+                    pagination=10,
+                    selection="multiple",
+                    on_select=on_table_select,
+                ).classes("w-full fc-products-table")
 
+    # Prefer a real NiceGUI checkbox so Python can set checked/indeterminate
+    # reliably (custom Vue bindings on QTable slots often stay empty).
+    # Quasar already wraps this slot in <q-th>, so do not add another one.
+    with table.add_slot("header-selection"):
+        select_all_checkbox = (
+            ui.checkbox(value=False, on_change=lambda _: on_select_all_header())
+            .props("color=primary size=md dense")
+            .classes("q-ma-none")
+        )
+    table.add_slot(
+        "body-selection",
+        """
+        <div class="row justify-center items-center" style="width:100%;">
+          <q-checkbox
+            color="primary"
+            size="md"
+            :model-value="props.selected"
+            @update:model-value="(val, evt) => {
+              Object.getOwnPropertyDescriptor(props, 'selected').set(val, evt)
+            }"
+          />
+        </div>
+        """,
+    )
     table.add_slot(
         "body-cell-image",
         """

@@ -57,6 +57,7 @@ _CURRENCY_FIELDS: frozenset[str] = frozenset(
         "total_revenue",
         "outstanding_debt",
         "warehouse_value",
+        "current_price",
     }
 )
 
@@ -276,38 +277,54 @@ def _add_page_decorations(canvas: Any, doc: Any) -> None:
     canvas.restoreState()
 
 
-def build_report_pdf(
+PRODUCT_IMAGE_PLACEHOLDER = PROJECT_ROOT / "images" / "products" / "_placeholder.png"
+
+
+def resolve_product_image_path(image_url: str | None) -> Path:
+    """Resolve a product image URL/path to an existing file, else placeholder."""
+    raw = (image_url or "").strip().replace("\\", "/")
+    if raw.startswith("/"):
+        raw = raw[1:]
+    if raw:
+        path = PROJECT_ROOT / raw
+        if path.exists():
+            return path
+    return PRODUCT_IMAGE_PLACEHOLDER
+
+
+def _product_image_flowable(image_url: str | None, *, size_mm: float = 12) -> Any:
+    path = resolve_product_image_path(image_url)
+    size = size_mm * mm
+    if path.exists():
+        return Image(str(path), width=size, height=size)
+    # Empty-looking box when placeholder is missing
+    box = Table([[""]], colWidths=[size], rowHeights=[size])
+    box.setStyle(
+        TableStyle(
+            [
+                ("BOX", (0, 0), (-1, -1), 0.5, FC_BORDER),
+                ("BACKGROUND", (0, 0), (-1, -1), FC_BG),
+            ]
+        )
+    )
+    return box
+
+
+def _build_document_header(
     *,
+    document: SimpleDocTemplate,
+    styles: dict[str, ParagraphStyle],
     report_title: str,
-    columns: list[dict[str, Any]],
-    rows: list[dict[str, Any]],
     date_from: str | None = None,
     date_to: str | None = None,
-) -> bytes:
-    """Build a styled PDF for the currently displayed report."""
-    styles = _build_styles()
+    include_period: bool = True,
+) -> list[Any]:
     settings = load_settings_values()
     company_name = settings.get("company_name") or "FlowCore"
     company_address = settings.get("company_address") or ""
     company_phone = settings.get("company_phone") or ""
-
-    export_columns = _export_columns(columns)
-    page_size = landscape(A4) if len(export_columns) > 6 else A4
-    buffer = BytesIO()
-    document = SimpleDocTemplate(
-        buffer,
-        pagesize=page_size,
-        leftMargin=14 * mm,
-        rightMargin=14 * mm,
-        topMargin=14 * mm,
-        bottomMargin=18 * mm,
-        title=report_title,
-        author=company_name,
-    )
-
     story: list[Any] = []
 
-    # --- Header: logo + company ---
     logo_path = _resolve_logo_file()
     company_lines: list[Any] = [Paragraph(company_name, styles["company"])]
     if company_address:
@@ -315,7 +332,10 @@ def build_report_pdf(
     if company_phone:
         company_lines.append(Paragraph(company_phone, styles["meta"]))
 
-    company_table = Table([[line] for line in company_lines], colWidths=[document.width - 40 * mm])
+    company_table = Table(
+        [[line] for line in company_lines],
+        colWidths=[document.width - 40 * mm],
+    )
     company_table.setStyle(
         TableStyle(
             [
@@ -352,8 +372,6 @@ def build_report_pdf(
         story.append(company_table)
 
     story.append(Spacer(1, 4 * mm))
-
-    # Accent strip under header (matches surface card feel)
     accent = Table([[""]], colWidths=[document.width])
     accent.setStyle(
         TableStyle(
@@ -368,82 +386,203 @@ def build_report_pdf(
     story.append(Spacer(1, 3 * mm))
 
     generated_at = datetime.now().strftime("%Y-%m-%d %H:%M")
-    if date_from or date_to:
-        period = f"{date_from or '…'} — {date_to or '…'}"
-    else:
-        period = t("reports.export.period_empty")
-
     story.append(Paragraph(report_title, styles["title"]))
     story.append(
         Paragraph(t("reports.export.generated_date", date=generated_at), styles["meta"])
     )
-    story.append(
-        Paragraph(t("reports.export.report_period", period=period), styles["meta"])
-    )
+    if include_period:
+        if date_from or date_to:
+            period = f"{date_from or '…'} — {date_to or '…'}"
+        else:
+            period = t("reports.export.period_empty")
+        story.append(
+            Paragraph(t("reports.export.report_period", period=period), styles["meta"])
+        )
     story.append(Spacer(1, 4 * mm))
+    return story
 
-    # --- Data table ---
+
+def _styled_data_table(
+    *,
+    document: SimpleDocTemplate,
+    styles: dict[str, ParagraphStyle],
+    columns: list[dict[str, Any]],
+    rows: list[dict[str, Any]],
+    image_size_mm: float = 12,
+) -> Table:
+    export_columns = _export_columns(columns)
+    header_cells = [
+        Paragraph(str(column.get("label") or column.get("field") or ""), styles["header_cell"])
+        for column in export_columns
+    ]
+    table_data: list[list[Any]] = [header_cells]
+    aligns = [
+        _column_align(column, str(column.get("field") or ""))
+        for column in export_columns
+    ]
+
+    for row in rows:
+        cells: list[Any] = []
+        for column, align in zip(export_columns, aligns):
+            field = str(column.get("field") or "")
+            if field in {"image_url", "image", "product_image"}:
+                cells.append(_product_image_flowable(row.get("image_url") or row.get(field), size_mm=image_size_mm))
+                continue
+            text = _format_cell(row.get(field, ""), field)
+            cells.append(
+                Paragraph(text.replace("\n", "<br/>"), _body_style_for(styles, align))
+            )
+        table_data.append(cells)
+
+    usable = document.width
+    weights: list[float] = []
+    for column in export_columns:
+        field = str(column.get("field") or "")
+        if field in {"image_url", "image", "product_image"}:
+            weights.append(0.7)
+        elif field in {
+            "product",
+            "name",
+            "customer",
+            "supplier",
+            "sale_number",
+            "purchase_number",
+            "description",
+        }:
+            weights.append(1.8)
+        elif field in _CURRENCY_FIELDS or field in _NUMERIC_FIELDS:
+            weights.append(1.0)
+        else:
+            weights.append(1.2)
+    weight_sum = sum(weights) or 1.0
+    col_widths = [usable * (w / weight_sum) for w in weights]
+
+    table = Table(table_data, colWidths=col_widths, repeatRows=1)
+    style_commands: list[tuple[Any, ...]] = [
+        ("BACKGROUND", (0, 0), (-1, 0), FC_PRIMARY),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), _FONT_BOLD),
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ("ALIGN", (0, 0), (-1, 0), "CENTER"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("GRID", (0, 0), (-1, -1), 0.4, FC_BORDER),
+        ("BOX", (0, 0), (-1, -1), 0.8, FC_PRIMARY),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [FC_SURFACE, FC_BG]),
+    ]
+    for index, align in enumerate(aligns):
+        field = str(export_columns[index].get("field") or "")
+        if field in {"image_url", "image", "product_image"}:
+            style_commands.append(("ALIGN", (index, 1), (index, -1), "CENTER"))
+        else:
+            style_commands.append(("ALIGN", (index, 1), (index, -1), align.upper()))
+    table.setStyle(TableStyle(style_commands))
+    return table
+
+
+def build_report_pdf(
+    *,
+    report_title: str,
+    columns: list[dict[str, Any]],
+    rows: list[dict[str, Any]],
+    date_from: str | None = None,
+    date_to: str | None = None,
+) -> bytes:
+    """Build a styled PDF for the currently displayed report."""
+    styles = _build_styles()
+    settings = load_settings_values()
+    company_name = settings.get("company_name") or "FlowCore"
+
+    export_columns = _export_columns(columns)
+    page_size = landscape(A4) if len(export_columns) > 6 else A4
+    buffer = BytesIO()
+    document = SimpleDocTemplate(
+        buffer,
+        pagesize=page_size,
+        leftMargin=14 * mm,
+        rightMargin=14 * mm,
+        topMargin=14 * mm,
+        bottomMargin=18 * mm,
+        title=report_title,
+        author=company_name,
+    )
+
+    story = _build_document_header(
+        document=document,
+        styles=styles,
+        report_title=report_title,
+        date_from=date_from,
+        date_to=date_to,
+        include_period=True,
+    )
+
     if not export_columns:
         story.append(Paragraph(t("reports.export.no_columns"), styles["meta"]))
     else:
-        header_cells = [
-            Paragraph(str(column.get("label") or column.get("field") or ""), styles["header_cell"])
-            for column in export_columns
-        ]
-        table_data: list[list[Any]] = [header_cells]
-        aligns = [
-            _column_align(column, str(column.get("field") or ""))
-            for column in export_columns
-        ]
+        story.append(
+            _styled_data_table(
+                document=document,
+                styles=styles,
+                columns=export_columns,
+                rows=rows,
+            )
+        )
 
-        for row in rows:
-            cells: list[Any] = []
-            for column, align in zip(export_columns, aligns):
-                field = str(column.get("field") or "")
-                text = _format_cell(row.get(field, ""), field)
-                cells.append(Paragraph(text.replace("\n", "<br/>"), _body_style_for(styles, align)))
-            table_data.append(cells)
+    document.build(
+        story,
+        onFirstPage=_add_page_decorations,
+        onLaterPages=_add_page_decorations,
+    )
+    return buffer.getvalue()
 
-        usable = document.width
-        # Slightly wider columns for names / product / customer first fields
-        weights: list[float] = []
-        for column in export_columns:
-            field = str(column.get("field") or "")
-            if field in {
-                "product",
-                "customer",
-                "supplier",
-                "sale_number",
-                "purchase_number",
-            }:
-                weights.append(1.6)
-            elif field in _CURRENCY_FIELDS or field in _NUMERIC_FIELDS:
-                weights.append(1.0)
-            else:
-                weights.append(1.2)
-        weight_sum = sum(weights) or 1.0
-        col_widths = [usable * (w / weight_sum) for w in weights]
 
-        table = Table(table_data, colWidths=col_widths, repeatRows=1)
-        style_commands: list[tuple[Any, ...]] = [
-            ("BACKGROUND", (0, 0), (-1, 0), FC_PRIMARY),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-            ("FONTNAME", (0, 0), (-1, 0), _FONT_BOLD),
-            ("FONTSIZE", (0, 0), (-1, -1), 8),
-            ("ALIGN", (0, 0), (-1, 0), "CENTER"),
-            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("GRID", (0, 0), (-1, -1), 0.4, FC_BORDER),
-            ("BOX", (0, 0), (-1, -1), 0.8, FC_PRIMARY),
-            ("TOPPADDING", (0, 0), (-1, -1), 4),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-            ("LEFTPADDING", (0, 0), (-1, -1), 4),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 4),
-            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [FC_SURFACE, FC_BG]),
-        ]
-        for index, align in enumerate(aligns):
-            style_commands.append(("ALIGN", (index, 1), (index, -1), align.upper()))
-        table.setStyle(TableStyle(style_commands))
-        story.append(table)
+def build_catalog_pdf(
+    *,
+    report_title: str,
+    columns: list[dict[str, Any]],
+    rows: list[dict[str, Any]],
+    landscape_orientation: bool = True,
+) -> bytes:
+    """Build a product catalog/price-list PDF using the report PDF styling."""
+    styles = _build_styles()
+    settings = load_settings_values()
+    company_name = settings.get("company_name") or "FlowCore"
+    export_columns = _export_columns(columns)
+    page_size = landscape(A4) if landscape_orientation else A4
+    buffer = BytesIO()
+    document = SimpleDocTemplate(
+        buffer,
+        pagesize=page_size,
+        leftMargin=14 * mm,
+        rightMargin=14 * mm,
+        topMargin=14 * mm,
+        bottomMargin=18 * mm,
+        title=report_title,
+        author=company_name,
+    )
+
+    story = _build_document_header(
+        document=document,
+        styles=styles,
+        report_title=report_title,
+        include_period=False,
+    )
+
+    if not export_columns:
+        story.append(Paragraph(t("reports.export.no_columns"), styles["meta"]))
+    else:
+        story.append(
+            _styled_data_table(
+                document=document,
+                styles=styles,
+                columns=export_columns,
+                rows=rows,
+                image_size_mm=11,
+            )
+        )
 
     document.build(
         story,
