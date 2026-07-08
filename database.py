@@ -73,6 +73,21 @@ def create_sqlite_triggers() -> None:
     logger.info("SQLite triggers created or already exist.")
 
 
+def ensure_inventory_rows() -> None:
+    """Backfill inventory rows for products that predate the create-inventory trigger."""
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                INSERT OR IGNORE INTO inventory (product_id, quantity, updated_at)
+                SELECT p.id, 0, CURRENT_TIMESTAMP
+                FROM products p
+                """
+            )
+        )
+    logger.info("Inventory rows ensured for all products.")
+
+
 def ensure_settings() -> None:
     """Reserved for default settings seeding; settings are created on first save."""
     return
@@ -83,6 +98,7 @@ def initialize_database() -> None:
     create_tables()
     verify_tables()
     create_sqlite_triggers()
+    ensure_inventory_rows()
 
     # Seed data after schema is ready (import here to avoid circular imports at load).
     from services.auth_service import ensure_users_table

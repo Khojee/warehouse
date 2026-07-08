@@ -3,12 +3,12 @@ from __future__ import annotations
 from typing import Any
 
 from nicegui import ui
-from sqlalchemy import func, or_, select, text
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import selectinload
 
 from core.i18n import movement_type_label, stock_status_label, t
-from database import SessionLocal, engine
+from database import SessionLocal
 from models import Inventory, Product, ProductAlias, ProductCategory, StockMovement
 from pages.components import (
     add_table_empty_state,
@@ -27,19 +27,6 @@ _STOCK_STATUS_ENGLISH: dict[str, str] = {
     "low_stock": "Low Stock",
     "out_of_stock": "Out Of Stock",
 }
-
-
-def ensure_inventory_rows() -> None:
-    with engine.begin() as conn:
-        conn.execute(
-            text(
-                """
-                INSERT OR IGNORE INTO inventory (product_id, quantity, updated_at)
-                SELECT p.id, 0, CURRENT_TIMESTAMP
-                FROM products p
-                """
-            )
-        )
 
 
 def get_stock_status(quantity: int, min_stock: int) -> tuple[str, str, str]:
@@ -90,7 +77,6 @@ def load_filter_options() -> dict[str, dict[str, str]]:
 
 
 def load_inventory_rows(filters: dict[str, str]) -> list[dict[str, Any]]:
-    ensure_inventory_rows()
     with SessionLocal() as session:
         stmt = (
             select(Product)
@@ -229,8 +215,6 @@ def adjust_stock(
 @ui.page("/inventory")
 @with_master_layout(t("inventory.title"))
 def inventory_page() -> None:
-    ensure_inventory_rows()
-
     filters = {
         "search": "",
         "category_id": "",
