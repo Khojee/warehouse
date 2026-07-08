@@ -12,9 +12,24 @@ from typing import Any, Callable
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import selectinload
 
-from core.i18n import debt_status_label, payment_status_label, stock_status_label
+from core.i18n import (
+    debt_status_label,
+    movement_type_label,
+    payment_status_label,
+    stock_status_label,
+)
 from database import SessionLocal
-from models import Debtor, Product, ProductAlias, Purchase, Sale
+from models import (
+    Customer,
+    Debtor,
+    Product,
+    ProductAlias,
+    Purchase,
+    Sale,
+    SaleItem,
+    StockMovement,
+    Supplier,
+)
 
 _STOCK_STATUS_ENGLISH: dict[str, str] = {
     "in_stock": "In Stock",
@@ -346,14 +361,111 @@ def _generate_debtors_report(
     return rows
 
 
+def summarize_product_sales_report(rows: list[dict[str, Any]]) -> dict[str, str]:
+    """Compute summary metrics for a product sales report result set."""
+    products_sold = len(rows)
+    quantity_sold = sum(int(row.get("quantity_sold", 0) or 0) for row in rows)
+    total_revenue = sum(Decimal(str(row.get("revenue", "0") or "0")) for row in rows)
+    return {
+        "products_sold": str(products_sold),
+        "quantity_sold": str(quantity_sold),
+        "total_revenue": f"{total_revenue:.2f}",
+    }
+
+
+def summarize_supplier_report(rows: list[dict[str, Any]]) -> dict[str, str]:
+    """Compute summary metrics for a supplier report result set."""
+    total_suppliers = len(rows)
+    total_purchases = sum(int(row.get("purchases_count", 0) or 0) for row in rows)
+    total_spent = sum(Decimal(str(row.get("total_spent", "0") or "0")) for row in rows)
+    outstanding_debt = sum(
+        Decimal(str(row.get("remaining", "0") or "0")) for row in rows
+    )
+    return {
+        "total_suppliers": str(total_suppliers),
+        "total_purchases": str(total_purchases),
+        "total_spent": f"{total_spent:.2f}",
+        "outstanding_debt": f"{outstanding_debt:.2f}",
+    }
+
+
+def summarize_customer_report(rows: list[dict[str, Any]]) -> dict[str, str]:
+    """Compute summary metrics for a customer report result set."""
+    total_customers = len(rows)
+    total_sales = sum(int(row.get("sales_count", 0) or 0) for row in rows)
+    total_revenue = sum(Decimal(str(row.get("total_revenue", "0") or "0")) for row in rows)
+    outstanding_debt = sum(
+        Decimal(str(row.get("remaining", "0") or "0")) for row in rows
+    )
+    return {
+        "total_customers": str(total_customers),
+        "total_sales": str(total_sales),
+        "total_revenue": f"{total_revenue:.2f}",
+        "outstanding_debt": f"{outstanding_debt:.2f}",
+    }
+
+
+def summarize_stock_movement_report(rows: list[dict[str, Any]]) -> dict[str, str]:
+    """Compute summary metrics for a stock movement report result set."""
+    total_movements = len(rows)
+    inbound = sum(
+        int(row.get("quantity", 0) or 0)
+        for row in rows
+        if str(row.get("movement_type_code", "")).upper() == "IN"
+    )
+    outbound = sum(
+        int(row.get("quantity", 0) or 0)
+        for row in rows
+        if str(row.get("movement_type_code", "")).upper() == "OUT"
+    )
+    return {
+        "total_movements": str(total_movements),
+        "inbound_quantity": str(inbound),
+        "outbound_quantity": str(outbound),
+        "net_quantity": str(inbound - outbound),
+    }
+
+
 def _generate_product_sales_report(
     *,
     date_from: str | None = None,
     date_to: str | None = None,
     filters: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    del date_from, date_to, filters
-    return []
+    del filters
+    start = _parse_date_bound(date_from)
+    end = _parse_date_bound(date_to, end_of_day=True)
+
+    with SessionLocal() as session:
+        stmt = (
+            select(
+                Product.id,
+                Product.name,
+                func.coalesce(func.sum(SaleItem.quantity), 0).label("quantity_sold"),
+                func.coalesce(func.sum(SaleItem.total_price), 0).label("revenue"),
+                func.count(func.distinct(SaleItem.sale_id)).label("sales_count"),
+            )
+            .join(SaleItem, SaleItem.product_id == Product.id)
+            .join(Sale, Sale.id == SaleItem.sale_id)
+            .group_by(Product.id, Product.name)
+            .order_by(func.sum(SaleItem.total_price).desc(), Product.name.asc())
+        )
+        if start is not None:
+            stmt = stmt.where(Sale.sale_date >= start)
+        if end is not None:
+            stmt = stmt.where(Sale.sale_date <= end)
+        results = session.execute(stmt).all()
+
+    return [
+        {
+            "product_id": row.id,
+            "product": row.name,
+            "quantity_sold": int(row.quantity_sold or 0),
+            "revenue": f"{Decimal(row.revenue):.2f}",
+            "sales_count": int(row.sales_count or 0),
+        }
+        for row in results
+    ]
 
 
 def _generate_supplier_report(
@@ -362,8 +474,41 @@ def _generate_supplier_report(
     date_to: str | None = None,
     filters: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    del date_from, date_to, filters
-    return []
+    del filters
+    start = _parse_date_bound(date_from)
+    end = _parse_date_bound(date_to, end_of_day=True)
+
+    with SessionLocal() as session:
+        stmt = (
+            select(
+                Supplier.id,
+                Supplier.company_name,
+                func.count(Purchase.id).label("purchases_count"),
+                func.coalesce(func.sum(Purchase.total_amount), 0).label("total_spent"),
+                func.coalesce(func.sum(Purchase.paid_amount), 0).label("paid"),
+                func.coalesce(func.sum(Purchase.remaining_amount), 0).label("remaining"),
+            )
+            .join(Purchase, Purchase.supplier_id == Supplier.id)
+            .group_by(Supplier.id, Supplier.company_name)
+            .order_by(func.sum(Purchase.total_amount).desc(), Supplier.company_name.asc())
+        )
+        if start is not None:
+            stmt = stmt.where(Purchase.purchase_date >= start)
+        if end is not None:
+            stmt = stmt.where(Purchase.purchase_date <= end)
+        results = session.execute(stmt).all()
+
+    return [
+        {
+            "supplier_id": row.id,
+            "supplier": row.company_name,
+            "purchases_count": int(row.purchases_count or 0),
+            "total_spent": f"{Decimal(row.total_spent):.2f}",
+            "paid": f"{Decimal(row.paid):.2f}",
+            "remaining": f"{Decimal(row.remaining):.2f}",
+        }
+        for row in results
+    ]
 
 
 def _generate_customer_report(
@@ -372,8 +517,41 @@ def _generate_customer_report(
     date_to: str | None = None,
     filters: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    del date_from, date_to, filters
-    return []
+    del filters
+    start = _parse_date_bound(date_from)
+    end = _parse_date_bound(date_to, end_of_day=True)
+
+    with SessionLocal() as session:
+        stmt = (
+            select(
+                Customer.id,
+                Customer.full_name,
+                func.count(Sale.id).label("sales_count"),
+                func.coalesce(func.sum(Sale.total_amount), 0).label("total_revenue"),
+                func.coalesce(func.sum(Sale.paid_amount), 0).label("paid"),
+                func.coalesce(func.sum(Sale.remaining_amount), 0).label("remaining"),
+            )
+            .join(Sale, Sale.customer_id == Customer.id)
+            .group_by(Customer.id, Customer.full_name)
+            .order_by(func.sum(Sale.total_amount).desc(), Customer.full_name.asc())
+        )
+        if start is not None:
+            stmt = stmt.where(Sale.sale_date >= start)
+        if end is not None:
+            stmt = stmt.where(Sale.sale_date <= end)
+        results = session.execute(stmt).all()
+
+    return [
+        {
+            "customer_id": row.id,
+            "customer": row.full_name,
+            "sales_count": int(row.sales_count or 0),
+            "total_revenue": f"{Decimal(row.total_revenue):.2f}",
+            "paid": f"{Decimal(row.paid):.2f}",
+            "remaining": f"{Decimal(row.remaining):.2f}",
+        }
+        for row in results
+    ]
 
 
 def _generate_stock_movement_report(
@@ -382,5 +560,32 @@ def _generate_stock_movement_report(
     date_to: str | None = None,
     filters: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    del date_from, date_to, filters
-    return []
+    del filters
+    start = _parse_date_bound(date_from)
+    end = _parse_date_bound(date_to, end_of_day=True)
+
+    with SessionLocal() as session:
+        stmt = (
+            select(StockMovement)
+            .options(selectinload(StockMovement.product))
+            .order_by(StockMovement.created_at.desc(), StockMovement.id.desc())
+        )
+        if start is not None:
+            stmt = stmt.where(StockMovement.created_at >= start)
+        if end is not None:
+            stmt = stmt.where(StockMovement.created_at <= end)
+        movements = session.scalars(stmt).all()
+
+    return [
+        {
+            "movement_id": movement.id,
+            "date": movement.created_at.strftime("%Y-%m-%d %H:%M"),
+            "product": movement.product.name if movement.product else "",
+            "movement_type": movement_type_label(movement.movement_type or ""),
+            "movement_type_code": (movement.movement_type or "").upper(),
+            "quantity": movement.quantity,
+            "reference_type": movement.reference_type or "",
+            "reference_id": movement.reference_id or "",
+        }
+        for movement in movements
+    ]

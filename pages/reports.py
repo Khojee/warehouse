@@ -231,6 +231,166 @@ def _debtors_report_columns() -> list[dict[str, str]]:
     ]
 
 
+def _product_sales_report_columns() -> list[dict[str, str]]:
+    return [
+        {
+            "name": "product",
+            "label": t("reports.product_sales.table.product"),
+            "field": "product",
+            "align": "left",
+            "sortable": True,
+        },
+        {
+            "name": "quantity_sold",
+            "label": t("reports.product_sales.table.quantity_sold"),
+            "field": "quantity_sold",
+            "align": "right",
+            "sortable": True,
+        },
+        {
+            "name": "revenue",
+            "label": t("reports.product_sales.table.revenue"),
+            "field": "revenue",
+            "align": "right",
+            "sortable": True,
+        },
+        {
+            "name": "sales_count",
+            "label": t("reports.product_sales.table.sales_count"),
+            "field": "sales_count",
+            "align": "right",
+            "sortable": True,
+        },
+    ]
+
+
+def _supplier_report_columns() -> list[dict[str, str]]:
+    return [
+        {
+            "name": "supplier",
+            "label": t("reports.suppliers.table.supplier"),
+            "field": "supplier",
+            "align": "left",
+            "sortable": True,
+        },
+        {
+            "name": "purchases_count",
+            "label": t("reports.suppliers.table.purchases_count"),
+            "field": "purchases_count",
+            "align": "right",
+            "sortable": True,
+        },
+        {
+            "name": "total_spent",
+            "label": t("reports.suppliers.table.total_spent"),
+            "field": "total_spent",
+            "align": "right",
+            "sortable": True,
+        },
+        {
+            "name": "paid",
+            "label": t("reports.suppliers.table.paid"),
+            "field": "paid",
+            "align": "right",
+            "sortable": True,
+        },
+        {
+            "name": "remaining",
+            "label": t("reports.suppliers.table.remaining"),
+            "field": "remaining",
+            "align": "right",
+            "sortable": True,
+        },
+    ]
+
+
+def _customer_report_columns() -> list[dict[str, str]]:
+    return [
+        {
+            "name": "customer",
+            "label": t("reports.customers.table.customer"),
+            "field": "customer",
+            "align": "left",
+            "sortable": True,
+        },
+        {
+            "name": "sales_count",
+            "label": t("reports.customers.table.sales_count"),
+            "field": "sales_count",
+            "align": "right",
+            "sortable": True,
+        },
+        {
+            "name": "total_revenue",
+            "label": t("reports.customers.table.total_revenue"),
+            "field": "total_revenue",
+            "align": "right",
+            "sortable": True,
+        },
+        {
+            "name": "paid",
+            "label": t("reports.customers.table.paid"),
+            "field": "paid",
+            "align": "right",
+            "sortable": True,
+        },
+        {
+            "name": "remaining",
+            "label": t("reports.customers.table.remaining"),
+            "field": "remaining",
+            "align": "right",
+            "sortable": True,
+        },
+    ]
+
+
+def _stock_movement_report_columns() -> list[dict[str, str]]:
+    return [
+        {
+            "name": "date",
+            "label": t("reports.stock_movements.table.date"),
+            "field": "date",
+            "align": "left",
+            "sortable": True,
+        },
+        {
+            "name": "product",
+            "label": t("reports.stock_movements.table.product"),
+            "field": "product",
+            "align": "left",
+            "sortable": True,
+        },
+        {
+            "name": "movement_type",
+            "label": t("reports.stock_movements.table.movement_type"),
+            "field": "movement_type",
+            "align": "center",
+            "sortable": True,
+        },
+        {
+            "name": "quantity",
+            "label": t("reports.stock_movements.table.quantity"),
+            "field": "quantity",
+            "align": "right",
+            "sortable": True,
+        },
+        {
+            "name": "reference_type",
+            "label": t("reports.stock_movements.table.reference_type"),
+            "field": "reference_type",
+            "align": "left",
+            "sortable": True,
+        },
+        {
+            "name": "reference_id",
+            "label": t("reports.stock_movements.table.reference_id"),
+            "field": "reference_id",
+            "align": "right",
+            "sortable": True,
+        },
+    ]
+
+
 @ui.page("/reports")
 @with_master_layout(t("reports.title"))
 def reports_page() -> None:
@@ -450,6 +610,87 @@ def reports_page() -> None:
                     icon="check_circle",
                 )
 
+            product_sales_summary = statistic_grid().classes("fc-report-stat-grid")
+            product_sales_summary.set_visibility(False)
+            with product_sales_summary:
+                stat_products_sold = statistic_card(
+                    t("reports.product_sales.stat.products_sold"),
+                    icon="category",
+                )
+                stat_product_quantity_sold = statistic_card(
+                    t("reports.product_sales.stat.quantity_sold"),
+                    icon="shopping_bag",
+                )
+                stat_product_total_revenue = statistic_card(
+                    t("reports.product_sales.stat.total_revenue"),
+                    value="0.00",
+                    icon="payments",
+                )
+
+            suppliers_summary = statistic_grid().classes("fc-report-stat-grid")
+            suppliers_summary.set_visibility(False)
+            with suppliers_summary:
+                stat_total_suppliers = statistic_card(
+                    t("reports.suppliers.stat.total_suppliers"),
+                    icon="local_shipping",
+                )
+                stat_supplier_purchases = statistic_card(
+                    t("reports.suppliers.stat.total_purchases"),
+                    icon="shopping_cart",
+                )
+                stat_supplier_spent = statistic_card(
+                    t("reports.suppliers.stat.total_spent"),
+                    value="0.00",
+                    icon="payments",
+                )
+                stat_supplier_outstanding = statistic_card(
+                    t("reports.suppliers.stat.outstanding_debt"),
+                    value="0.00",
+                    icon="trending_down",
+                )
+
+            customers_summary = statistic_grid().classes("fc-report-stat-grid")
+            customers_summary.set_visibility(False)
+            with customers_summary:
+                stat_total_customers = statistic_card(
+                    t("reports.customers.stat.total_customers"),
+                    icon="people",
+                )
+                stat_customer_sales = statistic_card(
+                    t("reports.customers.stat.total_sales"),
+                    icon="receipt_long",
+                )
+                stat_customer_revenue = statistic_card(
+                    t("reports.customers.stat.total_revenue"),
+                    value="0.00",
+                    icon="payments",
+                )
+                stat_customer_outstanding = statistic_card(
+                    t("reports.customers.stat.outstanding_debt"),
+                    value="0.00",
+                    icon="trending_down",
+                )
+
+            stock_movements_summary = statistic_grid().classes("fc-report-stat-grid")
+            stock_movements_summary.set_visibility(False)
+            with stock_movements_summary:
+                stat_total_movements = statistic_card(
+                    t("reports.stock_movements.stat.total_movements"),
+                    icon="swap_vert",
+                )
+                stat_inbound_quantity = statistic_card(
+                    t("reports.stock_movements.stat.inbound_quantity"),
+                    icon="arrow_downward",
+                )
+                stat_outbound_quantity = statistic_card(
+                    t("reports.stock_movements.stat.outbound_quantity"),
+                    icon="arrow_upward",
+                )
+                stat_net_quantity = statistic_card(
+                    t("reports.stock_movements.stat.net_quantity"),
+                    icon="balance",
+                )
+
             with data_table_card().classes("fc-report-preview-table"):
                 preview_table = ui.table(
                     columns=_sales_report_columns(),
@@ -488,6 +729,10 @@ def reports_page() -> None:
             inventory_summary.set_visibility(False)
             purchase_summary.set_visibility(False)
             debtors_summary.set_visibility(False)
+            product_sales_summary.set_visibility(False)
+            suppliers_summary.set_visibility(False)
+            customers_summary.set_visibility(False)
+            stock_movements_summary.set_visibility(False)
 
         def show_sales_preview(rows: list[dict[str, Any]]) -> None:
             preview_table.columns = _sales_report_columns()
@@ -548,16 +793,91 @@ def reports_page() -> None:
             preview_empty.set_visibility(False)
             preview_content.set_visibility(True)
 
+        def show_product_sales_preview(rows: list[dict[str, Any]]) -> None:
+            preview_table.columns = _product_sales_report_columns()
+            preview_table._props["row-key"] = "product_id"
+            preview_table.rows = rows
+            preview_table.update()
+            summary = reports_service.summarize_product_sales_report(rows)
+            stat_products_sold.text = summary["products_sold"]
+            stat_product_quantity_sold.text = summary["quantity_sold"]
+            stat_product_total_revenue.text = summary["total_revenue"]
+            hide_all_summaries()
+            product_sales_summary.set_visibility(True)
+            preview_empty.set_visibility(False)
+            preview_content.set_visibility(True)
+
+        def show_supplier_preview(rows: list[dict[str, Any]]) -> None:
+            preview_table.columns = _supplier_report_columns()
+            preview_table._props["row-key"] = "supplier_id"
+            preview_table.rows = rows
+            preview_table.update()
+            summary = reports_service.summarize_supplier_report(rows)
+            stat_total_suppliers.text = summary["total_suppliers"]
+            stat_supplier_purchases.text = summary["total_purchases"]
+            stat_supplier_spent.text = summary["total_spent"]
+            stat_supplier_outstanding.text = summary["outstanding_debt"]
+            hide_all_summaries()
+            suppliers_summary.set_visibility(True)
+            preview_empty.set_visibility(False)
+            preview_content.set_visibility(True)
+
+        def show_customer_preview(rows: list[dict[str, Any]]) -> None:
+            preview_table.columns = _customer_report_columns()
+            preview_table._props["row-key"] = "customer_id"
+            preview_table.rows = rows
+            preview_table.update()
+            summary = reports_service.summarize_customer_report(rows)
+            stat_total_customers.text = summary["total_customers"]
+            stat_customer_sales.text = summary["total_sales"]
+            stat_customer_revenue.text = summary["total_revenue"]
+            stat_customer_outstanding.text = summary["outstanding_debt"]
+            hide_all_summaries()
+            customers_summary.set_visibility(True)
+            preview_empty.set_visibility(False)
+            preview_content.set_visibility(True)
+
+        def show_stock_movement_preview(rows: list[dict[str, Any]]) -> None:
+            preview_table.columns = _stock_movement_report_columns()
+            preview_table._props["row-key"] = "movement_id"
+            preview_table.rows = rows
+            preview_table.update()
+            summary = reports_service.summarize_stock_movement_report(rows)
+            stat_total_movements.text = summary["total_movements"]
+            stat_inbound_quantity.text = summary["inbound_quantity"]
+            stat_outbound_quantity.text = summary["outbound_quantity"]
+            stat_net_quantity.text = summary["net_quantity"]
+            hide_all_summaries()
+            stock_movements_summary.set_visibility(True)
+            preview_empty.set_visibility(False)
+            preview_content.set_visibility(True)
+
         def show_empty_preview() -> None:
             preview_table.rows = []
             preview_table.update()
             preview_empty.set_visibility(True)
             preview_content.set_visibility(False)
 
+        preview_handlers: dict[str, Any] = {
+            "sales": show_sales_preview,
+            "purchases": show_purchase_preview,
+            "inventory": show_inventory_preview,
+            "debtors": show_debtors_preview,
+            "product_sales": show_product_sales_preview,
+            "suppliers": show_supplier_preview,
+            "customers": show_customer_preview,
+            "stock_movements": show_stock_movement_preview,
+        }
+
         def on_generate() -> None:
             selection["date_from"] = str(from_date_input.value or "")
             selection["date_to"] = str(to_date_input.value or "")
             report_type = str(selection["report_type"])
+            handler = preview_handlers.get(report_type)
+            if handler is None:
+                show_empty_preview()
+                ui.notify(t("reports.notify.coming_next"), color="info")
+                return
 
             if report_type == "inventory":
                 selection["filters"] = {
@@ -571,7 +891,7 @@ def reports_page() -> None:
                     report_type=report_type,
                     filters=dict(selection["filters"]),
                 )
-                show_inventory_preview(rows)
+                handler(rows)
                 return
 
             date_from, date_to = _resolve_report_dates(
@@ -579,36 +899,10 @@ def reports_page() -> None:
                 selection["date_from"],
                 selection["date_to"],
             )
-
-            if report_type == "sales":
-                rows = reports_service.generate_report(
-                    report_type=report_type,
-                    date_from=date_from,
-                    date_to=date_to,
-                    filters=dict(selection["filters"]),
-                )
-                show_sales_preview(rows)
-                return
-
-            if report_type == "purchases":
-                rows = reports_service.generate_report(
-                    report_type=report_type,
-                    date_from=date_from,
-                    date_to=date_to,
-                    filters=dict(selection["filters"]),
-                )
-                show_purchase_preview(rows)
-                return
-
-            if report_type == "debtors":
-                rows = reports_service.generate_report(
-                    report_type=report_type,
-                    date_from=date_from,
-                    date_to=date_to,
-                    filters=dict(selection["filters"]),
-                )
-                show_debtors_preview(rows)
-                return
-
-            show_empty_preview()
-            ui.notify(t("reports.notify.coming_next"), color="info")
+            rows = reports_service.generate_report(
+                report_type=report_type,
+                date_from=date_from,
+                date_to=date_to,
+                filters=dict(selection["filters"]),
+            )
+            handler(rows)
