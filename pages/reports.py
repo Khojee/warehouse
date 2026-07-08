@@ -168,6 +168,69 @@ def _inventory_report_columns() -> list[dict[str, str]]:
     ]
 
 
+def _purchase_report_columns() -> list[dict[str, str]]:
+    return [
+        {
+            "name": "supplier",
+            "label": t("reports.purchases.table.supplier"),
+            "field": "supplier",
+            "align": "left",
+        },
+        {
+            "name": "purchase_number",
+            "label": t("reports.purchases.table.purchase_number"),
+            "field": "purchase_number",
+            "align": "left",
+        },
+        {"name": "date", "label": t("reports.purchases.table.date"), "field": "date", "align": "left"},
+        {"name": "total", "label": t("reports.purchases.table.total"), "field": "total", "align": "right"},
+        {"name": "paid", "label": t("reports.purchases.table.paid"), "field": "paid", "align": "right"},
+        {
+            "name": "remaining",
+            "label": t("reports.purchases.table.remaining"),
+            "field": "remaining",
+            "align": "right",
+        },
+        {
+            "name": "status",
+            "label": t("reports.purchases.table.status"),
+            "field": "status",
+            "align": "center",
+        },
+    ]
+
+
+def _debtors_report_columns() -> list[dict[str, str]]:
+    return [
+        {
+            "name": "customer",
+            "label": t("reports.debtors.table.customer"),
+            "field": "customer",
+            "align": "left",
+        },
+        {
+            "name": "sale_number",
+            "label": t("reports.debtors.table.sale_number"),
+            "field": "sale_number",
+            "align": "left",
+        },
+        {"name": "debt", "label": t("reports.debtors.table.debt"), "field": "debt", "align": "right"},
+        {"name": "paid", "label": t("reports.debtors.table.paid"), "field": "paid", "align": "right"},
+        {
+            "name": "remaining",
+            "label": t("reports.debtors.table.remaining"),
+            "field": "remaining",
+            "align": "right",
+        },
+        {
+            "name": "status",
+            "label": t("reports.debtors.table.status"),
+            "field": "status",
+            "align": "center",
+        },
+    ]
+
+
 @ui.page("/reports")
 @with_master_layout(t("reports.title"))
 def reports_page() -> None:
@@ -347,6 +410,46 @@ def reports_page() -> None:
                     icon="remove_shopping_cart",
                 )
 
+            purchase_summary = statistic_grid().classes("fc-report-stat-grid")
+            purchase_summary.set_visibility(False)
+            with purchase_summary:
+                stat_total_purchases = statistic_card(
+                    t("reports.purchases.stat.total_purchases"),
+                    icon="shopping_cart",
+                )
+                stat_total_spent = statistic_card(
+                    t("reports.purchases.stat.total_spent"),
+                    value="0.00",
+                    icon="payments",
+                )
+                stat_outstanding_supplier_debt = statistic_card(
+                    t("reports.purchases.stat.outstanding_supplier_debt"),
+                    value="0.00",
+                    icon="trending_down",
+                )
+
+            debtors_summary = statistic_grid().classes("fc-report-stat-grid")
+            debtors_summary.set_visibility(False)
+            with debtors_summary:
+                stat_debtors_outstanding = statistic_card(
+                    t("reports.debtors.stat.outstanding_debt"),
+                    value="0.00",
+                    icon="account_balance",
+                )
+                stat_debtors_collected = statistic_card(
+                    t("reports.debtors.stat.collected"),
+                    value="0.00",
+                    icon="account_balance_wallet",
+                )
+                stat_active_debtors = statistic_card(
+                    t("reports.debtors.stat.active_debtors"),
+                    icon="groups",
+                )
+                stat_paid_debtors = statistic_card(
+                    t("reports.debtors.stat.paid_debtors"),
+                    icon="check_circle",
+                )
+
             with data_table_card().classes("fc-report-preview-table"):
                 preview_table = ui.table(
                     columns=_sales_report_columns(),
@@ -380,6 +483,12 @@ def reports_page() -> None:
         sync_custom_dates_visibility()
         sync_report_controls()
 
+        def hide_all_summaries() -> None:
+            sales_summary.set_visibility(False)
+            inventory_summary.set_visibility(False)
+            purchase_summary.set_visibility(False)
+            debtors_summary.set_visibility(False)
+
         def show_sales_preview(rows: list[dict[str, Any]]) -> None:
             preview_table.columns = _sales_report_columns()
             preview_table._props["row-key"] = "sale_number"
@@ -390,8 +499,8 @@ def reports_page() -> None:
             stat_total_revenue.text = summary["total_revenue"]
             stat_paid_amount.text = summary["paid_amount"]
             stat_outstanding_debt.text = summary["outstanding_debt"]
+            hide_all_summaries()
             sales_summary.set_visibility(True)
-            inventory_summary.set_visibility(False)
             preview_empty.set_visibility(False)
             preview_content.set_visibility(True)
 
@@ -405,8 +514,37 @@ def reports_page() -> None:
             stat_warehouse_value.text = summary["warehouse_value"]
             stat_low_stock_count.text = summary["low_stock_count"]
             stat_out_of_stock_count.text = summary["out_of_stock_count"]
-            sales_summary.set_visibility(False)
+            hide_all_summaries()
             inventory_summary.set_visibility(True)
+            preview_empty.set_visibility(False)
+            preview_content.set_visibility(True)
+
+        def show_purchase_preview(rows: list[dict[str, Any]]) -> None:
+            preview_table.columns = _purchase_report_columns()
+            preview_table._props["row-key"] = "purchase_number"
+            preview_table.rows = rows
+            preview_table.update()
+            summary = reports_service.summarize_purchase_report(rows)
+            stat_total_purchases.text = summary["total_purchases"]
+            stat_total_spent.text = summary["total_spent"]
+            stat_outstanding_supplier_debt.text = summary["outstanding_supplier_debt"]
+            hide_all_summaries()
+            purchase_summary.set_visibility(True)
+            preview_empty.set_visibility(False)
+            preview_content.set_visibility(True)
+
+        def show_debtors_preview(rows: list[dict[str, Any]]) -> None:
+            preview_table.columns = _debtors_report_columns()
+            preview_table._props["row-key"] = "debtor_id"
+            preview_table.rows = rows
+            preview_table.update()
+            summary = reports_service.summarize_debtors_report(rows)
+            stat_debtors_outstanding.text = summary["outstanding_debt"]
+            stat_debtors_collected.text = summary["collected"]
+            stat_active_debtors.text = summary["active_debtors"]
+            stat_paid_debtors.text = summary["paid_debtors"]
+            hide_all_summaries()
+            debtors_summary.set_visibility(True)
             preview_empty.set_visibility(False)
             preview_content.set_visibility(True)
 
@@ -436,20 +574,41 @@ def reports_page() -> None:
                 show_inventory_preview(rows)
                 return
 
-            if report_type != "sales":
-                show_empty_preview()
-                ui.notify(t("reports.notify.coming_next"), color="info")
-                return
-
             date_from, date_to = _resolve_report_dates(
                 str(selection["date_range"]),
                 selection["date_from"],
                 selection["date_to"],
             )
-            rows = reports_service.generate_report(
-                report_type=report_type,
-                date_from=date_from,
-                date_to=date_to,
-                filters=dict(selection["filters"]),
-            )
-            show_sales_preview(rows)
+
+            if report_type == "sales":
+                rows = reports_service.generate_report(
+                    report_type=report_type,
+                    date_from=date_from,
+                    date_to=date_to,
+                    filters=dict(selection["filters"]),
+                )
+                show_sales_preview(rows)
+                return
+
+            if report_type == "purchases":
+                rows = reports_service.generate_report(
+                    report_type=report_type,
+                    date_from=date_from,
+                    date_to=date_to,
+                    filters=dict(selection["filters"]),
+                )
+                show_purchase_preview(rows)
+                return
+
+            if report_type == "debtors":
+                rows = reports_service.generate_report(
+                    report_type=report_type,
+                    date_from=date_from,
+                    date_to=date_to,
+                    filters=dict(selection["filters"]),
+                )
+                show_debtors_preview(rows)
+                return
+
+            show_empty_preview()
+            ui.notify(t("reports.notify.coming_next"), color="info")

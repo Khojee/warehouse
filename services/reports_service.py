@@ -12,9 +12,9 @@ from typing import Any, Callable
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import selectinload
 
-from core.i18n import payment_status_label, stock_status_label
+from core.i18n import debt_status_label, payment_status_label, stock_status_label
 from database import SessionLocal
-from models import Product, ProductAlias, Sale
+from models import Debtor, Product, ProductAlias, Purchase, Sale
 
 _STOCK_STATUS_ENGLISH: dict[str, str] = {
     "in_stock": "In Stock",
@@ -60,6 +60,17 @@ def generate_report(
     return generator(date_from=date_from, date_to=date_to, filters=filters or {})
 
 
+def _payment_status_display(value: str) -> str:
+    normalized = (value or "").strip().lower()
+    mapping = {
+        "paid": "Paid",
+        "unpaid": "Unpaid",
+        "partial": "Partially Paid",
+        "partially paid": "Partially Paid",
+    }
+    return payment_status_label(mapping.get(normalized, value or ""))
+
+
 def summarize_sales_report(rows: list[dict[str, Any]]) -> dict[str, str]:
     """Compute summary metrics for a sales report result set."""
     total_sales = len(rows)
@@ -74,6 +85,42 @@ def summarize_sales_report(rows: list[dict[str, Any]]) -> dict[str, str]:
         "paid_amount": f"{paid_amount:.2f}",
         "outstanding_debt": f"{outstanding_debt:.2f}",
     }
+
+
+def summarize_purchase_report(rows: list[dict[str, Any]]) -> dict[str, str]:
+    """Compute summary metrics for a purchase report result set."""
+    total_purchases = len(rows)
+    total_spent = sum(Decimal(str(row.get("total", "0") or "0")) for row in rows)
+    outstanding_supplier_debt = sum(
+        Decimal(str(row.get("remaining", "0") or "0")) for row in rows
+    )
+    return {
+        "total_purchases": str(total_purchases),
+        "total_spent": f"{total_spent:.2f}",
+        "outstanding_supplier_debt": f"{outstanding_supplier_debt:.2f}",
+    }
+
+
+def summarize_debtors_report(rows: list[dict[str, Any]]) -> dict[str, str]:
+    """Compute summary metrics for a debtors report result set."""
+    outstanding_debt = sum(
+        Decimal(str(row.get("remaining", "0") or "0")) for row in rows
+    )
+    collected = sum(Decimal(str(row.get("paid", "0") or "0")) for row in rows)
+    active_debtors = sum(1 for row in rows if row.get("status_code") == "Active")
+    paid_debtors = sum(1 for row in rows if row.get("status_code") == "Paid")
+    return {
+        "outstanding_debt": f"{outstanding_debt:.2f}",
+        "collected": f"{collected:.2f}",
+        "active_debtors": str(active_debtors),
+        "paid_debtors": str(paid_debtors),
+    }
+
+
+def _debtor_status_code(remaining_amount: Decimal) -> str:
+    if remaining_amount <= Decimal("0.00"):
+        return "Paid"
+    return "Active"
 
 
 def summarize_inventory_report(rows: list[dict[str, Any]]) -> dict[str, str]:
@@ -148,7 +195,7 @@ def _generate_sales_report(
             "paid_amount": f"{sale.paid_amount:.2f}",
             "remaining_amount": f"{sale.remaining_amount:.2f}",
             "payment_type": sale.payment_type or "",
-            "status": payment_status_label(sale.payment_status or ""),
+            "status": _payment_status_display(sale.payment_status or ""),
         }
         for sale in sales
     ]
@@ -160,8 +207,35 @@ def _generate_purchase_report(
     date_to: str | None = None,
     filters: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    del date_from, date_to, filters
-    return []
+    del filters
+    start = _parse_date_bound(date_from)
+    end = _parse_date_bound(date_to, end_of_day=True)
+
+    with SessionLocal() as session:
+        stmt = (
+            select(Purchase)
+            .options(selectinload(Purchase.supplier))
+            .order_by(Purchase.purchase_date.desc(), Purchase.id.desc())
+        )
+        if start is not None:
+            stmt = stmt.where(Purchase.purchase_date >= start)
+        if end is not None:
+            stmt = stmt.where(Purchase.purchase_date <= end)
+        purchases = session.scalars(stmt).all()
+
+    return [
+        {
+            "purchase_id": purchase.id,
+            "supplier": purchase.supplier.company_name if purchase.supplier else "",
+            "purchase_number": purchase.purchase_number,
+            "date": purchase.purchase_date.strftime("%Y-%m-%d"),
+            "total": f"{purchase.total_amount:.2f}",
+            "paid": f"{purchase.paid_amount:.2f}",
+            "remaining": f"{purchase.remaining_amount:.2f}",
+            "status": _payment_status_display(purchase.payment_status or ""),
+        }
+        for purchase in purchases
+    ]
 
 
 def _generate_inventory_report(
@@ -238,8 +312,38 @@ def _generate_debtors_report(
     date_to: str | None = None,
     filters: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    del date_from, date_to, filters
-    return []
+    del filters
+    start = _parse_date_bound(date_from)
+    end = _parse_date_bound(date_to, end_of_day=True)
+
+    with SessionLocal() as session:
+        stmt = (
+            select(Debtor)
+            .options(selectinload(Debtor.customer), selectinload(Debtor.sale))
+            .order_by(Debtor.created_at.desc(), Debtor.id.desc())
+        )
+        if start is not None:
+            stmt = stmt.where(Debtor.sale.has(Sale.sale_date >= start))
+        if end is not None:
+            stmt = stmt.where(Debtor.sale.has(Sale.sale_date <= end))
+        debtors = session.scalars(stmt).all()
+
+    rows: list[dict[str, Any]] = []
+    for debtor in debtors:
+        status_code = _debtor_status_code(debtor.remaining_amount)
+        rows.append(
+            {
+                "debtor_id": debtor.id,
+                "customer": debtor.customer.full_name if debtor.customer else "",
+                "sale_number": debtor.sale.sale_number if debtor.sale else "",
+                "debt": f"{debtor.total_debt:.2f}",
+                "paid": f"{debtor.paid_amount:.2f}",
+                "remaining": f"{debtor.remaining_amount:.2f}",
+                "status": debt_status_label(status_code),
+                "status_code": status_code,
+            }
+        )
+    return rows
 
 
 def _generate_product_sales_report(
