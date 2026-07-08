@@ -17,7 +17,7 @@ from pages.components import (
 )
 from pages.inventory import load_filter_options
 from pages.layout import with_master_layout
-from services import excel_export, reports_service
+from services import excel_export, pdf_export, reports_service
 
 
 def _report_type_options() -> dict[str, str]:
@@ -515,6 +515,13 @@ def reports_page() -> None:
                 color="positive",
             )
             export_excel_button.disable()
+            export_pdf_button = ui.button(
+                t("reports.button.export_pdf"),
+                on_click=lambda: on_export_pdf(),
+                icon="picture_as_pdf",
+                color="primary",
+            )
+            export_pdf_button.disable()
             ui.button(
                 t("reports.button.generate"),
                 on_click=lambda: on_generate(),
@@ -734,6 +741,7 @@ def reports_page() -> None:
             preview_state["date_from"] = date_from
             preview_state["date_to"] = date_to
             export_excel_button.enable()
+            export_pdf_button.enable()
 
         def clear_preview_state() -> None:
             preview_state["report_type"] = None
@@ -743,6 +751,7 @@ def reports_page() -> None:
             preview_state["date_from"] = None
             preview_state["date_to"] = None
             export_excel_button.disable()
+            export_pdf_button.disable()
 
         def sync_custom_dates_visibility() -> None:
             custom_dates_row.set_visibility(selection["date_range"] == "custom")
@@ -1003,6 +1012,28 @@ def reports_page() -> None:
                 ui.notify(t("reports.notify.export_ready"), color="positive")
             except Exception:
                 ui.notify(t("reports.notify.export_failed"), color="negative")
+
+        def on_export_pdf() -> None:
+            if not preview_state.get("report_type") or not preview_state.get("columns"):
+                ui.notify(t("reports.notify.export_empty"), color="warning")
+                return
+            try:
+                content = pdf_export.build_report_pdf(
+                    report_title=str(preview_state["report_title"]),
+                    columns=list(preview_state["columns"]),
+                    rows=list(preview_state["rows"]),
+                    date_from=preview_state.get("date_from"),
+                    date_to=preview_state.get("date_to"),
+                )
+                report_type = str(preview_state["report_type"])
+                pdf_export.save_report_pdf(content, report_type=report_type)
+                filename = (
+                    f"{report_type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+                )
+                ui.download.content(content, filename, media_type="application/pdf")
+                ui.notify(t("reports.notify.export_pdf_ready"), color="positive")
+            except Exception:
+                ui.notify(t("reports.notify.export_pdf_failed"), color="negative")
 
         def on_generate() -> None:
             selection["date_from"] = str(from_date_input.value or "")

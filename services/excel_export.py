@@ -12,6 +12,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font
 from openpyxl.utils import get_column_letter
 
+from core.i18n import t
 from pages.settings import load_settings_values
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -78,7 +79,7 @@ def build_report_workbook(
 
     workbook = Workbook()
     worksheet = workbook.active
-    worksheet.title = "Report"
+    worksheet.title = t("reports.export.worksheet")
 
     bold = Font(bold=True)
     meta_font = Font(size=11)
@@ -94,12 +95,16 @@ def build_report_workbook(
     if company_phone:
         contact_parts.append(company_phone)
     if company_telegram:
-        contact_parts.append(f"Telegram: {company_telegram}")
+        contact_parts.append(t("reports.export.telegram", telegram=company_telegram))
     if contact_parts:
         worksheet.cell(row=row_index, column=1, value=" | ".join(contact_parts)).font = meta_font
         row_index += 1
     if currency:
-        worksheet.cell(row=row_index, column=1, value=f"Currency: {currency}").font = meta_font
+        worksheet.cell(
+            row=row_index,
+            column=1,
+            value=t("reports.export.currency", currency=currency),
+        ).font = meta_font
         row_index += 1
 
     row_index += 1
@@ -107,13 +112,16 @@ def build_report_workbook(
     row_index += 1
 
     generated_at = datetime.now().strftime("%Y-%m-%d %H:%M")
-    period = ""
+    generated_line = t("reports.export.generated", date=generated_at)
     if date_from or date_to:
-        period = f" | Period: {date_from or '…'} — {date_to or '…'}"
+        period = f"{date_from or '…'} — {date_to or '…'}"
+        generated_line = (
+            f"{generated_line} | {t('reports.export.period', period=period)}"
+        )
     worksheet.cell(
         row=row_index,
         column=1,
-        value=f"Generated: {generated_at}{period}",
+        value=generated_line,
     ).font = meta_font
     row_index += 2
 
