@@ -29,22 +29,6 @@ _STOCK_STATUS_ENGLISH: dict[str, str] = {
 }
 
 
-def ensure_inventory_trigger() -> None:
-    with engine.begin() as conn:
-        conn.execute(
-            text(
-                """
-                CREATE TRIGGER IF NOT EXISTS trg_products_create_inventory
-                AFTER INSERT ON products
-                BEGIN
-                    INSERT OR IGNORE INTO inventory (product_id, quantity, updated_at)
-                    VALUES (NEW.id, 0, CURRENT_TIMESTAMP);
-                END
-                """
-            )
-        )
-
-
 def ensure_inventory_rows() -> None:
     with engine.begin() as conn:
         conn.execute(
@@ -245,7 +229,6 @@ def adjust_stock(
 @ui.page("/inventory")
 @with_master_layout(t("inventory.title"))
 def inventory_page() -> None:
-    ensure_inventory_trigger()
     ensure_inventory_rows()
 
     filters = {

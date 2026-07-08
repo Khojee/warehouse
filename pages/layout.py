@@ -90,8 +90,9 @@ html, body {
 
 .fc-header-logo {
     height: 46px;
-    width: auto;
+    width: 46px;
     display: block;
+    flex: 0 0 auto;
 }
 
 .fc-header-title {
@@ -350,7 +351,7 @@ def _apply_theme() -> None:
 
 def _build_header() -> None:
     with ui.element("header").classes("fc-header"):
-        ui.image(LOGO_URL).classes("fc-header-logo").props("no-spinner")
+        ui.image(LOGO_URL).classes("fc-header-logo").props("no-spinner fit=contain")
         ui.label(APP_NAME).classes("fc-header-title")
 
 

@@ -21,7 +21,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from database import DB_PATH, SessionLocal, engine
 from core.i18n import t
-from models import Base, User
+from models import User
 
 
 SESSION_KEY = "flowcore_auth"
@@ -66,9 +66,7 @@ def get_storage_secret() -> str:
 
 
 def ensure_users_table() -> None:
-    """Create the users table if missing and seed the default admin account."""
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    Base.metadata.create_all(bind=engine, tables=[User.__table__])
+    """Seed the default admin account when no users exist."""
     with SessionLocal.begin() as session:
         existing = session.scalar(select(User).limit(1))
         if existing is None:
