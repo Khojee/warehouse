@@ -97,7 +97,6 @@ def reports_page() -> None:
             selection["date_to"] = str(to_date_input.value or "")
             reports_service.generate_report(
                 report_type=str(selection["report_type"]),
-                date_range=str(selection["date_range"]),
                 date_from=selection["date_from"] if selection["date_range"] == "custom" else None,
                 date_to=selection["date_to"] if selection["date_range"] == "custom" else None,
                 filters=dict(selection["filters"]),
